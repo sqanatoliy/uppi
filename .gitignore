@@ -15,3 +15,6 @@ Thumbs.db
 
 # Ignore virtual environment
 /venv
+
+# Innore playwright auth state
+state.json

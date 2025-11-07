@@ -1,0 +1,4 @@
+Scrapy==2.13.3
+playwright==.1.55.0
+scrapy-playwright==0.0.44
+python-decouple==3.8
