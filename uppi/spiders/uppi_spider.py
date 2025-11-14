@@ -1,4 +1,6 @@
 import os
+import shutil
+import csv
 import scrapy
 from typing import Optional
 from decouple import config
@@ -8,10 +10,6 @@ from uppi.utils.selectors import UppiSelectors
 from uppi.utils.captcha_solver import solve_captcha
 from uppi.utils.playwright_helpers import apply_stealth, log_requests, get_webgl_vendor
 
-UFFICIO_PROVINCIALE_LABEL = config("UFFICIO_PROVINCIALE_LABEL", default="PESCARA Territorio")
-TIPO_CATASTO = config("TIPO_CATASTO", default="F") # "F" for Fabbricati, "T" for Terreni, "E" for Terreni e Fabbricati
-COMUNE = config("COMUNE", default="PESCARA")
-CODICE_FISCALE = config("CODICE_FISCALE")
 
 AE_LOGIN_URL = config("AE_LOGIN_URL")
 AE_URL_SERVIZI = config("AE_URL_SERVIZI")
@@ -28,6 +26,33 @@ class UppiSpider(scrapy.Spider):
     name = "uppi"
     allowed_domains = ["agenziaentrate.gov.it"]
 
+    DEFAULT_COMUNE: str = "PESCARA"
+    DEFAULT_TIPO_CATASTO: str = "F"
+    DEFAULT_UFFICIO: str = "PESCARA Territorio"
+
+    def load_clients(self, path: str = "clients/clients.csv"):
+        """Load clients from CSV file. Returns list of client dicts."""
+        clients = []
+        if not os.path.exists(path):
+            self.logger.error(f"[CLIENTS] File not found: {path}")
+            return clients
+
+        with open(path, newline="", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                codice = row.get("CODICE_FISCALE", "").strip()
+                if not codice:
+                    continue
+                client = {
+                    "CODICE_FISCALE": codice,
+                    "COMUNE": row.get("COMUNE", "").strip() or self.DEFAULT_COMUNE,
+                    "TIPO_CATASTO": row.get("TIPO_CATASTO", "").strip() or self.DEFAULT_TIPO_CATASTO,
+                    "UFFICIO_PROVINCIALE_LABEL": row.get("UFFICIO_PROVINCIALE_LABEL", "").strip() or self.DEFAULT_UFFICIO,
+                }
+                clients.append(client)
+        self.logger.info(f"[CLIENTS] Loaded {len(clients)} clients from {path}")
+        return clients
+
     async def start(self):
         """Entry point: remove stale session file and start login request."""
         self.logger.info("[START] Cleaning old state.json if present")
@@ -37,6 +62,13 @@ class UppiSpider(scrapy.Spider):
                 self.logger.info("[START] Old state.json removed")
         except Exception as e:
             self.logger.warning("[START] Failed to remove state.json: %s", e)
+        self.logger.info("[START] Cleaning old captcha_images folder if present")
+        try:
+            if os.path.exists("captcha_images"):
+                shutil.rmtree("captcha_images")
+                self.logger.info("[START] Old captcha_images folder removed")
+        except Exception as e:
+            self.logger.warning("[START] Failed to remove captcha_images folder: %s", e)
 
         yield scrapy.Request(
             url=AE_LOGIN_URL,
@@ -116,14 +148,7 @@ class UppiSpider(scrapy.Spider):
         )
 
     async def preparare_sister_service(self, response):
-        """
-        High-level coordinator after login.
-        Splits work into smaller methods:
-         - open SISTER service in new page
-         - navigate/select options
-         - handle captcha if present
-         - trigger and save download
-        """
+        """Prepare SISTER service page and process clients."""
         page: Optional[Page] = response.meta.get("playwright_page")
         if not page:
             self.logger.error("[PARSE] No Playwright page provided")
@@ -144,32 +169,38 @@ class UppiSpider(scrapy.Spider):
             self.logger.error("[PARSE] Could not open SISTER page. Aborting parse.")
             return
 
-        # Perform navigation and selections inside sister
-        navigated = await self._navigate_to_visure_catastali(sister_page)
-        if not navigated:
-            self.logger.error("[PARSE] Navigation inside SISTER failed. Attempting cleanup.")
-            try:
-                await self._logout_in_context(page.context, via_ui=True)
-            except Exception:
-                pass
-            # remove incomplete state
-            if os.path.exists("state.json"):
-                try:
-                    os.remove("state.json")
-                    self.logger.info("[PARSE] Removed state.json after failed navigation")
-                except Exception as e:
-                    self.logger.warning("[PARSE] Failed to remove state.json: %s", e)
+        clients = self.load_clients("clients/clients.csv")
+        if not clients:
+            self.logger.error("[PARSE] No clients found, aborting")
+            await self._logout_in_context(page.context, via_ui=True)
             return
 
-        # Optional CAPTCHA
-        await self._solve_captcha_if_present(sister_page)
+        try:
+            for i, client in enumerate(clients, start=1):
+                self.logger.info(f"[CLIENT {i}/{len(clients)}] Processing {client['CODICE_FISCALE']}")
+                try:
+                    ok = await self._navigate_to_visure_catastali(
+                        sister_page,
+                        codice_fiscale=client["CODICE_FISCALE"],
+                        comune=client["COMUNE"],
+                        tipo_catasto=client["TIPO_CATASTO"],
+                        ufficio_label=client["UFFICIO_PROVINCIALE_LABEL"],
+                    )
+                    if not ok:
+                        self.logger.warning(f"[CLIENT {i}] Navigation failed, skipping client")
+                        continue
 
-        # Download document
-        await self._download_document(sister_page)
+                    await self._solve_captcha_if_present(sister_page, client["CODICE_FISCALE"])
+                    await self._download_document(sister_page, client["CODICE_FISCALE"])
+                except Exception as e:
+                    self.logger.exception(f"[CLIENT {i}] Error processing client: {e}")
+                    continue  # move to next client
 
-        # Final logout and cleanup
-        await self._logout_in_context(sister_page.context, via_ui=True)
-        self.logger.info("[PARSE] Finished preparare_sister_service")
+        finally:
+            # Always logout at the very end
+            self.logger.info("[PARSE] All clients processed. Logging out...")
+            await self._logout_in_context(sister_page.context, via_ui=True)
+            self.logger.info("[PARSE] Logout completed.")
 
     async def _open_sister_service(self, page: Page) -> Optional[Page]:
         """Open SISTER in a new page/tab and save state.json. Returns sister_page or None."""
@@ -220,7 +251,11 @@ class UppiSpider(scrapy.Spider):
 
         return sister_page
 
-    async def _navigate_to_visure_catastali(self, sister_page: Page) -> bool:
+    async def _navigate_to_visure_catastali(self, sister_page: Page,
+                                            codice_fiscale: str,
+                                            comune: str,
+                                            tipo_catasto: str,
+                                            ufficio_label: str) -> bool:
         """
         Make the series of clicks/selects inside SISTER to reach property list.
         Returns True on success, False on failure.
@@ -234,35 +269,44 @@ class UppiSpider(scrapy.Spider):
             await sister_page.goto(SISTER_VISURE_CATASTALI_URL)
             # Handle possible "Conferma Lettura"
             try:
-                await sister_page.wait_for_selector(UppiSelectors.CONFERMA_LETTURA, timeout=3_000)
+                await sister_page.wait_for_selector(UppiSelectors.CONFERMA_LETTURA, timeout=2_000)
                 await sister_page.click(UppiSelectors.CONFERMA_LETTURA)
             except PlaywrightTimeoutError:
                 self.logger.info("[NAVIGATE TO VISURE CATASTALI] Conferma Lettura not found, possibly already accepted")
+
             # Select ufficio
             select_ufficio = sister_page.locator(UppiSelectors.SELECT_UFFICIO)
             await select_ufficio.wait_for()
-            await sister_page.wait_for_timeout(1_000)
-            await select_ufficio.select_option(label=UFFICIO_PROVINCIALE_LABEL)
+            await select_ufficio.select_option(label=ufficio_label)
             await sister_page.click(UppiSelectors.APLICA_BUTTON)
 
+            # Select catasto
             select_catasto = sister_page.locator(UppiSelectors.SELECT_CATASTO)
             await select_catasto.wait_for()
             await sister_page.wait_for_timeout(1_000)
-            await select_catasto.select_option(value=TIPO_CATASTO)
+            await select_catasto.select_option(value=tipo_catasto)
 
+            # Select comune
             select_comune = sister_page.locator(UppiSelectors.SELECT_COMUNE)
             await select_comune.wait_for()
             await sister_page.wait_for_timeout(1_000)
-            await select_comune.select_option(label=COMUNE)
+            await select_comune.select_option(label=comune)
 
+            # Fill codice fiscale and search
             await sister_page.click(UppiSelectors.CODICE_FISCALE_RADIO)
-            await sister_page.fill(UppiSelectors.CODICE_FISCALE_FIELD, CODICE_FISCALE)
+            await sister_page.fill(UppiSelectors.CODICE_FISCALE_FIELD, codice_fiscale)
             await sister_page.click(UppiSelectors.RICERCA_BUTTON)
 
-            # handle omonimi list and select first property
-            await sister_page.wait_for_selector(UppiSelectors.SELECT_OMONIMI, timeout=10_000)
-            await sister_page.wait_for_timeout(1_000)
-            await sister_page.click(UppiSelectors.SELECT_OMONIMI)
+            try:
+                # handle omonimi list and select first property
+                await sister_page.wait_for_selector(UppiSelectors.SELECT_OMONIMI, timeout=3_000)
+                await sister_page.click(UppiSelectors.SELECT_OMONIMI)
+            except PlaywrightTimeoutError:
+                self.logger.info("[NAVIGATE TO VISURE CATASTALI] Codice fiscale, maybe is invalid or no properties found")
+                return False
+            except Exception as e:
+                self.logger.exception("[NAVIGATE TO VISURE CATASTALI] Error selecting omonimi: %s", e)
+                return False
 
             # If you want to select property by Elenco immobili per diritti e quote instead Visura per soggetto, uncomment below and comment the visura per soggetto line
             # await sister_page.click(UppiSelectors.IMOBILI_BUTTON)
@@ -274,7 +318,7 @@ class UppiSpider(scrapy.Spider):
             # Proceed to visura per soggetto
             await sister_page.click(UppiSelectors.VISURA_PER_SOGGECTO_BUTTON)
 
-            self.logger.info("[NAVIGATE TO VISURE CATASTALI] Completed navigation to property view")
+            self.logger.info(f"[NAVIGATE] Completed for {codice_fiscale}")
             return True
         except PlaywrightTimeoutError as e:
             self.logger.warning("[NAVIGATE TO VISURE CATASTALI] Timeout during navigation: %s", e)
@@ -283,7 +327,7 @@ class UppiSpider(scrapy.Spider):
             self.logger.exception("[NAVIGATE TO VISURE CATASTALI] Unexpected error during navigation: %s", e)
             return False
 
-    async def _solve_captcha_if_present(self, sister_page: Page):
+    async def _solve_captcha_if_present(self, sister_page: Page, codice_fiscale: str = ""):
         """Detect and solve CAPTCHA when present. Logs detailed status."""
         try:
             await sister_page.wait_for_selector(UppiSelectors.IMG_CAPTCHA, timeout=5_000)
@@ -302,7 +346,7 @@ class UppiSpider(scrapy.Spider):
         try:
             self.logger.info("[CAPTCHA] Captcha detected, invoking solver")
             await sister_page.click(UppiSelectors.CAPTCHA_FIELD)
-            captcha_solution = await solve_captcha(sister_page, TWO_CAPTCHA_API_KEY, UppiSelectors.IMG_CAPTCHA)
+            captcha_solution = await solve_captcha(sister_page, TWO_CAPTCHA_API_KEY, codice_fiscale, UppiSelectors.IMG_CAPTCHA)
             if not captcha_solution:
                 self.logger.error("[CAPTCHA] Solver returned no solution")
                 return
@@ -321,9 +365,9 @@ class UppiSpider(scrapy.Spider):
         except Exception as e:
             self.logger.exception("[CAPTCHA] Unexpected error in captcha handling: %s", e)
 
-    async def _download_document(self, sister_page: Page):
+    async def _download_document(self, sister_page: Page, codice_fiscale: str):
         """Trigger document download and save file to downloads/ folder."""
-        downloads_dir = os.path.join(os.getcwd(), f"downloads/{CODICE_FISCALE}")
+        downloads_dir = os.path.join(os.getcwd(), f"downloads/{codice_fiscale}")
         os.makedirs(downloads_dir, exist_ok=True)
 
         download_ctx = None
@@ -357,6 +401,7 @@ class UppiSpider(scrapy.Spider):
     async def safe_close_page(self, page: Optional[Page], label: str = ""):
         """Safely close a Playwright page with logging."""
         if not page:
+            self.logger.debug(f"[CLOSE] No page to close {label}")
             return
         try:
             await page.close()

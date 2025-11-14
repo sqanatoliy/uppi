@@ -2,7 +2,7 @@ import base64
 from twocaptcha import TwoCaptcha
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError, Page
 
-async def solve_captcha(playwright_page: Page, solver_key, img_captcha_selector="#imgCaptcha"):
+async def solve_captcha(playwright_page: Page, solver_key: str, codice_fiscale: str, img_captcha_selector="#imgCaptcha"):
     """
     Solves a CAPTCHA using 2Captcha service.
     Args:
@@ -24,8 +24,8 @@ async def solve_captcha(playwright_page: Page, solver_key, img_captcha_selector=
             return None
 
         # 2. Makes screenshot of the CAPTCHA element
-        await playwright_page.wait_for_timeout(5_000)
-        captcha_bytes = await captcha_element.screenshot(path="captcha_images/captcha.png", type="png")
+        await playwright_page.wait_for_timeout(3_000)
+        captcha_bytes = await captcha_element.screenshot(path="captcha_images/codice_fiscale/captcha.png", type="png")
         if not captcha_bytes:
             print("[CAPTCHA] ⚠️ Не вдалося отримати скріншот CAPTCHA.")
             return None
