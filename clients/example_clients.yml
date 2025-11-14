@@ -1,0 +1,7 @@
+# This file shows an example of the clients.csv file you should create to process a list of clients. 
+# The first line is the headers, then the parameters for each clients, 
+# only the first parameter of client is required, the others can be left blank, separated by commas.
+
+CODICE_FISCALE,COMUNE,TIPO_CATASTO,UFFICIO_PROVINCIALE_LABEL    # headers line is required with strictly these names
+RSSMRA80A01H501Z,PESCARA,F,PESCARA Territorio                   # all parameters passed
+CCMMRT77K44H501X,,,                                             # only the required parameter passed
