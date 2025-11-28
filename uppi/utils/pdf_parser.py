@@ -8,22 +8,30 @@ PDF_PATH = "downloads/CCMMRT71S44H501X/DOC_1926488153.pdf"
 
 
 class VisuraParser:
+
     # -------------------------------
     #  REGEX PATTERNS
     # -------------------------------
+    # Name and Codice Fiscale pattern
     NAME_CF = re.compile(
         r"^([A-ZÀÈÌÒÙ]{2,})\s+([A-Za-zÀÈÌÒÙ]+)\s+\(CF:\s*([A-Z0-9]{16})\)",
         re.UNICODE
     )
 
+
+    # Comune pattern
     COMUNE_TABLE = re.compile(
         r"Immobili\s+siti\s+nel\s+Comune\s+di\s+(.+?)\s+\(Codice\s+([A-Z0-9]+)\)",
         re.IGNORECASE
     )
 
+    # Superficie patterns
     SUPERFICIE_TOTALE = re.compile(r"Totale:\s*([0-9.,]+)")
     SUPERFICIE_ESCLUSE = re.compile(r"Totale escluse aree\s*scoperte\*\*:\s*([0-9.,]+)")
 
+    # -------------------------------
+    #  TABLE KEYWORDS
+    #  Grouped header tables
     GROUPED_HEADER_KEYWORDS = [
         "DATI IDENTIFICATIVI",
         "DATI DI CLASSAMENTO",
@@ -39,40 +47,78 @@ class VisuraParser:
     # key columns to identify real estate tables
     REAL_ESTATE_COLUMNS = {"Foglio", "Numero", "Sub", "Categoria", "Classe"}
 
+
+    # -------------------------------
+    #  ADDRESS REGEX
+    # -------------------------------
+    ADDRESS_PATTERNS = {
+        "num_via": re.compile(
+            r'(?:n\.?\s*)?([\d]+[A-Z]?[\-/\dA-Z]*|SNC)', 
+            re.IGNORECASE
+        ),
+
+        "scala": re.compile(
+            r'(SCALA|SC\.?)\s*([A-Z0-9]+)',
+            re.IGNORECASE
+        ),
+
+        "interno": re.compile(
+            r'(INTERNO|INT\.?)\s*([A-Z0-9]+)',
+            re.IGNORECASE
+        ),
+
+        "piano": re.compile(
+            r'(PIANO|P\.?)\s*([-A-Z0-9°]+|T|TERRA|RIALZATO|AMMEZZATO|S\d)',
+            re.IGNORECASE
+        ),
+    }
+
+    STREET_TYPE_REGEX = re.compile(
+        r'^(VIA|VIALE|PIAZZA|P\.?ZZA|CORSO|STRADA|VICOLO|LARGO|BORGO|LOCALITÀ|LOC\.?|FRAZIONE|FRAZ\.?|CONTRADA)\s+(.+)',
+        re.IGNORECASE | re.UNICODE
+    )
+
+
     # -------------------------------
     #  MAIN ENTRYPOINT
     # -------------------------------
     def parse(self, pdf_path):
-        doc = fitz.open(pdf_path)
-        name_data = self._extract_name_cf(doc)
+            doc = fitz.open(pdf_path)
+            name_data = self._extract_name_cf(doc)
 
-        results = []
+            all_immobili = [] # Загальний список для всіх об'єктів
 
-        for page_idx in range(len(doc)):
-            comune_name, comune_code = self._extract_comune_for_page(doc[page_idx])
+            for page_idx in range(len(doc)):
+                comune_name, comune_code = self._extract_comune_for_page(doc[page_idx])
 
-            tables = camelot.read_pdf(
-                pdf_path,
-                pages=str(page_idx + 1),
-                flavor="lattice"
-            )
+                tables = camelot.read_pdf(
+                    pdf_path,
+                    pages=str(page_idx + 1),
+                    flavor="lattice"
+                )
 
-            for table in tables:
-                parsed = self._process_table(table)
-                if parsed is None:
-                    continue
+                for table in tables:
+                    parsed = self._process_table(table)
+                    if parsed is None:
+                        continue
 
-                parsed.update({
-                    "surname": name_data["surname"],
-                    "given_name": name_data["given_name"],
-                    "codice_fiscale": name_data["cf"],
-                    "comune": comune_name,
-                    "comune_code": comune_code
-                })
+                    immobili_list = parsed.get("immobili", [])
+                    # print(f"Page {page_idx + 1}: Found {parsed}")
 
-                results.append(parsed)
+                    # Проходимо по кожному об'єкту і додаємо загальні дані
+                    for immobile in immobili_list:
+                        immobile.update({
+                            "surname": name_data["surname"],
+                            "given_name": name_data["given_name"],
+                            "codice_fiscale": name_data["cf"],
+                            "comune": comune_name,
+                            "comune_code": comune_code
+                        })
+                        
+                        # Додаємо збагачений об'єкт до загального списку результатів
+                        all_immobili.append(immobile)
 
-        return results
+            return all_immobili # Повертаємо плаский список
 
     # -------------------------------
     #  NAME + CF ONLY FROM FIRST PAGE
@@ -116,6 +162,7 @@ class VisuraParser:
     #  TABLE PROCESSING
     # -------------------------------
     def _process_table(self, table):
+        """Process a single table and extract real estate data."""
         df = table.df
 
         # --- 1) detect grouped header (DATI IDENTIFICATIVI etc)
@@ -174,6 +221,12 @@ class VisuraParser:
             for col_index, col_name in enumerate(header):
                 raw_value = df.iloc[i, col_index].strip()
 
+                # Indirizzo
+                if "Indirizzo" in col_name:
+                    parsed_addr = self._parse_address(raw_value)
+                    row_dict.update(parsed_addr)
+                    continue
+
                 # Superficie
                 if col_name == "Superficie Catastale":
                     parsed = self._parse_superficie(raw_value)
@@ -186,7 +239,7 @@ class VisuraParser:
 
         return {
             # "columns": header,
-            "rows": rows
+            "immobili": rows
         }
 
     # -------------------------------
@@ -214,7 +267,44 @@ class VisuraParser:
         }
 
     def _normalize_number(self, numstr):
+        """Normalize number string to float."""
         return float(numstr.replace(",", ".").replace(" ", ""))
+
+    # -------------------------------
+    #  ADDRESS PARSER
+    # -------------------------------
+    def _parse_address(self, text):
+        """Parse address into components."""
+        raw = text.replace("\n", " ").strip()
+        clean = raw
+
+        parsed = {
+            "via": None,
+            "num_via": None,
+            "scala": None,
+            "interno": None,
+            "piano": None,
+            "indirizzo_raw": raw
+        }
+
+        # Витягуємо частини адреси незалежними regex
+        for key, pattern in self.ADDRESS_PATTERNS.items():
+            m = pattern.search(clean)
+            if m:
+                value = m.group(1 if key == "num_via" else 2).strip()
+                parsed[key] = value
+                clean = clean.replace(m.group(0), " ", 1)
+
+        clean = clean.strip()
+
+        # Визначення via
+        m = self.STREET_TYPE_REGEX.match(clean)
+        if m:
+            parsed["via"] = m.group(0).strip()
+        else:
+            parsed["via"] = clean if clean else None
+
+        return parsed
 
 
 # --------------------------------------------------
