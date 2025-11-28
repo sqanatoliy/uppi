@@ -9,4 +9,8 @@ import scrapy
 class UppiItem(scrapy.Item):
     # define the fields for your item here like:
     # name = scrapy.Field()
-    pass
+    nav_to_visure_catastali = scrapy.Field()
+    codice_fiscale = scrapy.Field()
+    comune = scrapy.Field()
+    tipo_catasto = scrapy.Field()
+    ufficio_label = scrapy.Field()

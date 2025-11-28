@@ -5,8 +5,9 @@ import scrapy
 from typing import Optional
 from decouple import config
 from playwright.async_api import Page, TimeoutError as PlaywrightTimeoutError
+from uppi.items import UppiItem
 from uppi.utils.stealth import STEALTH_SCRIPT
-from uppi.utils.selectors import UppiSelectors
+from uppi.utils.uppi_selectors import UppiSelectors
 from uppi.utils.captcha_solver import solve_captcha
 from uppi.utils.playwright_helpers import apply_stealth, log_requests, get_webgl_vendor
 
@@ -177,6 +178,13 @@ class UppiSpider(scrapy.Spider):
 
         try:
             for i, client in enumerate(clients, start=1):
+                item: UppiItem = UppiItem()
+                item["nav_to_visure_catastali"] = True
+                item["codice_fiscale"] = client["CODICE_FISCALE"] or "User without codice fiscale"
+                item["comune"] = client["COMUNE"] or "Unknown Comune"
+                item["tipo_catasto"] = client["TIPO_CATASTO"] or "Unknown Tipo Catasto"
+                item["ufficio_label"] = client["UFFICIO_PROVINCIALE_LABEL"] or "Unknown Ufficio"
+
                 self.logger.info(f"[CLIENT {i}/{len(clients)}] Processing {client['CODICE_FISCALE']}")
                 try:
                     ok = await self._navigate_to_visure_catastali(
@@ -188,10 +196,13 @@ class UppiSpider(scrapy.Spider):
                     )
                     if not ok:
                         self.logger.warning(f"[CLIENT {i}] Navigation failed, skipping client")
+                        item["nav_to_visure_catastali"] = False
+                        yield item  # yield item even on failure to record attempt
                         continue
 
                     await self._solve_captcha_if_present(sister_page, client["CODICE_FISCALE"])
                     await self._download_document(sister_page, client["CODICE_FISCALE"])
+                    yield item
                 except Exception as e:
                     self.logger.exception(f"[CLIENT {i}] Error processing client: {e}")
                     continue  # move to next client
@@ -267,6 +278,9 @@ class UppiSpider(scrapy.Spider):
             # await sister_page.click(UppiSelectors.VISURE_CATASTALI)
             # await sister_page.wait_for_timeout(1_000)
             await sister_page.goto(SISTER_VISURE_CATASTALI_URL)
+            if sister_page.url != SISTER_VISURE_CATASTALI_URL:
+                self.logger.warning("[NAVIGATE TO VISURE CATASTALI] Navigation to VISURE CATASTALI URL failed")
+                return False
             # Handle possible "Conferma Lettura"
             try:
                 await sister_page.wait_for_selector(UppiSelectors.CONFERMA_LETTURA, timeout=2_000)
@@ -275,10 +289,14 @@ class UppiSpider(scrapy.Spider):
                 self.logger.info("[NAVIGATE TO VISURE CATASTALI] Conferma Lettura not found, possibly already accepted")
 
             # Select ufficio
-            select_ufficio = sister_page.locator(UppiSelectors.SELECT_UFFICIO)
-            await select_ufficio.wait_for()
-            await select_ufficio.select_option(label=ufficio_label)
-            await sister_page.click(UppiSelectors.APLICA_BUTTON)
+            try:
+                select_ufficio = sister_page.locator(UppiSelectors.SELECT_UFFICIO)
+                await select_ufficio.wait_for(timeout=5_000)
+                await select_ufficio.select_option(label=ufficio_label)
+                await sister_page.click(UppiSelectors.APLICA_BUTTON)
+            except PlaywrightTimeoutError:
+                self.logger.warning("[NAVIGATE TO VISURE CATASTALI] Ufficio selection failed or timed out")
+                return False
 
             # Select catasto
             select_catasto = sister_page.locator(UppiSelectors.SELECT_CATASTO)
@@ -391,8 +409,9 @@ class UppiSpider(scrapy.Spider):
             return
 
         try:
-            suggested = download_obj.suggested_filename
-            download_path = os.path.join(downloads_dir, suggested)
+            # suggested = download_obj.suggested_filename
+            visura_file_name = f"VISURA_{codice_fiscale}.pdf"
+            download_path = os.path.join(downloads_dir, visura_file_name)
             await download_obj.save_as(download_path)
             self.logger.info("[DOWNLOAD] File saved: %s", download_path)
         except Exception as e:
