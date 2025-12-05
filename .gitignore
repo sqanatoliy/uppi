@@ -21,6 +21,6 @@ state.json
 # Ignore downloads 
 /downloads
 #
-/clients/clients.csv
+/clients/clients.yml
 captcha_images/
 output/
