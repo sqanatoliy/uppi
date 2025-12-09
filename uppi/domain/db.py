@@ -10,6 +10,7 @@ DB_PORT = config("DB_PORT", default="5432")
 DB_NAME = config("DB_NAME", default="uppi_db")
 DB_USER = config("DB_USER", default="uppi_user")
 DB_PASSWORD = config("DB_PASSWORD", default="uppi_password")
+DB_SSL_MODE = config("DB_SSL_MODE", default="prefer")
 
 
 def _get_pg_connection():
@@ -48,6 +49,7 @@ def _get_pg_connection():
             dbname=DB_NAME,
             user=DB_USER,
             password=DB_PASSWORD,
+            sslmode=DB_SSL_MODE,
         )
         return conn
     except psycopg2.Error as e:

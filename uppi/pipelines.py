@@ -16,7 +16,6 @@ Scrapy pipelines for the Uppi project.
 
 from pathlib import Path
 from typing import Dict, List, Any
-import re
 
 import logging
 
@@ -62,14 +61,18 @@ def _get_minio_client() -> Minio:
             secret_key=MINIO_SECRET_KEY,
             secure=MINIO_SECURE,
         )
-        # гарантуємо, що бакет існує
-        if not client.bucket_exists(MINIO_BUCKET):
-            logger.info(
-                "[MINIO] Bucket %r не існує, пробуємо створити на %s",
-                MINIO_BUCKET,
-                MINIO_ENDPOINT,
-            )
-            client.make_bucket(MINIO_BUCKET)
+        
+        # Перевіряємо, що бакет існує
+        try:
+            if not client.bucket_exists(MINIO_BUCKET):
+                logger.warning(
+                    "[MINIO] Bucket %r не існує, Створи його вручну для R2 в R2 Dashboard.",
+                    MINIO_BUCKET
+                )
+        except Exception:
+            # R2 інколи не дозволяє bucket_exists через відсутність ListBuckets
+            logger.info("[R2] Неможливо перевірити bucket через API — продовжуємо.")
+
         _minio_client = client
         logger.info("[MINIO] Підключення до %s, bucket=%s готове", MINIO_ENDPOINT, MINIO_BUCKET)
         return _minio_client
@@ -88,8 +91,7 @@ def load_immobiles_from_db(cf: str) -> List[Immobile]:
     """
     Завантажити всі Immobile для візури конкретного CF з таблиці immobili.
 
-    ВАЖЛИВО: SQL повністю відповідає поточній схемі таблиці `immobili`
-    і полям dataclass `Immobile`.
+    SQL відповідає поточній схемі таблиці `immobili` і полям dataclass `Immobile`.
     """
     conn = None
     try:
@@ -141,7 +143,16 @@ def load_immobiles_from_db(cf: str) -> List[Immobile]:
                     -- адреса локатора (з YAML, збережена в БД)
                     locatore_comune_res,
                     locatore_via,
-                    locatore_civico
+                    locatore_civico,
+
+                    -- Елементи A/B/C/D
+                    a1, a2,
+                    b1, b2, b3, b4, b5,
+                    c1, c2, c3, c4, c5, c6, c7,
+                    d1, d2, d3, d4, d5, d6, d7, d8, d9, d10, d11, d12, d13,
+
+                    -- Підсумкові кількості
+                    a_cnt, b_cnt, c_cnt, d_cnt
                 FROM immobili
                 WHERE visura_cf = %s
                 ORDER BY id;
@@ -194,6 +205,11 @@ def load_immobiles_from_db(cf: str) -> List[Immobile]:
             locatore_comune_res,
             locatore_via,
             locatore_civico,
+            a1, a2,
+            b1, b2, b3, b4, b5,
+            c1, c2, c3, c4, c5, c6, c7,
+            d1, d2, d3, d4, d5, d6, d7, d8, d9, d10, d11, d12, d13,
+            a_cnt, b_cnt, c_cnt, d_cnt,
         ) = row
 
         immobiles.append(
@@ -233,6 +249,37 @@ def load_immobiles_from_db(cf: str) -> List[Immobile]:
                 locatore_comune_res=locatore_comune_res,
                 locatore_via=locatore_via,
                 locatore_civico=locatore_civico,
+                a1=a1,
+                a2=a2,
+                b1=b1,
+                b2=b2,
+                b3=b3,
+                b4=b4,
+                b5=b5,
+                c1=c1,
+                c2=c2,
+                c3=c3,
+                c4=c4,
+                c5=c5,
+                c6=c6,
+                c7=c7,
+                d1=d1,
+                d2=d2,
+                d3=d3,
+                d4=d4,
+                d5=d5,
+                d6=d6,
+                d7=d7,
+                d8=d8,
+                d9=d9,
+                d10=d10,
+                d11=d11,
+                d12=d12,
+                d13=d13,
+                a_cnt=a_cnt,
+                b_cnt=b_cnt,
+                c_cnt=c_cnt,
+                d_cnt=d_cnt,
             )
         )
 
@@ -249,8 +296,8 @@ def save_visura(cf: str, immobiles: List[Immobile], pdf_path: Path) -> None:
 
     Після успішного запису локальний PDF видаляється.
 
-    при FORCE_UPDATE_VISURA старі override-и не губляться, 
-    навіть якщо в актуальному YAML ти не передав адресу повторно
+    при FORCE_UPDATE_VISURA старі override-и і A/B/C/D не губляться,
+    навіть якщо в актуальному YAML ти не передав їх повторно.
     """
     object_name = f"visure/{cf}.pdf"
 
@@ -281,7 +328,7 @@ def save_visura(cf: str, immobiles: List[Immobile], pdf_path: Path) -> None:
         conn = _get_pg_connection()
         with conn:
             with conn.cursor() as cur:
-                # 0. Зчитуємо старі override-и та адресу локатора для цього CF
+                # 0. Зчитуємо старі override-и, адресу локатора і A/B/C/D для цього CF
                 cur.execute(
                     """
                     SELECT
@@ -295,7 +342,12 @@ def save_visura(cf: str, immobiles: List[Immobile], pdf_path: Path) -> None:
                         immobile_interno_override,
                         locatore_comune_res,
                         locatore_via,
-                        locatore_civico
+                        locatore_civico,
+                        a1, a2,
+                        b1, b2, b3, b4, b5,
+                        c1, c2, c3, c4, c5, c6, c7,
+                        d1, d2, d3, d4, d5, d6, d7, d8, d9, d10, d11, d12, d13,
+                        a_cnt, b_cnt, c_cnt, d_cnt
                     FROM immobili
                     WHERE visura_cf = %s;
                     """,
@@ -308,7 +360,7 @@ def save_visura(cf: str, immobiles: List[Immobile], pdf_path: Path) -> None:
                     foglio,
                     numero,
                     sub,
-                    immobile_comune_override,
+                    immobile_com_override,
                     immobile_via_override,
                     immobile_civico_override,
                     immobile_piano_override,
@@ -316,6 +368,11 @@ def save_visura(cf: str, immobiles: List[Immobile], pdf_path: Path) -> None:
                     locatore_comune_res,
                     locatore_via,
                     locatore_civico,
+                    a1, a2,
+                    b1, b2, b3, b4, b5,
+                    c1, c2, c3, c4, c5, c6, c7,
+                    d1, d2, d3, d4, d5, d6, d7, d8, d9, d10, d11, d12, d13,
+                    a_cnt, b_cnt, c_cnt, d_cnt,
                 ) in old_rows:
                     key = (
                         str(foglio) if foglio is not None else "",
@@ -323,7 +380,7 @@ def save_visura(cf: str, immobiles: List[Immobile], pdf_path: Path) -> None:
                         str(sub) if sub is not None else "",
                     )
                     old_map[key] = {
-                        "immobile_comune_override": immobile_comune_override,
+                        "immobile_comune_override": immobile_com_override,
                         "immobile_via_override": immobile_via_override,
                         "immobile_civico_override": immobile_civico_override,
                         "immobile_piano_override": immobile_piano_override,
@@ -331,6 +388,37 @@ def save_visura(cf: str, immobiles: List[Immobile], pdf_path: Path) -> None:
                         "locatore_comune_res": locatore_comune_res,
                         "locatore_via": locatore_via,
                         "locatore_civico": locatore_civico,
+                        "a1": a1,
+                        "a2": a2,
+                        "b1": b1,
+                        "b2": b2,
+                        "b3": b3,
+                        "b4": b4,
+                        "b5": b5,
+                        "c1": c1,
+                        "c2": c2,
+                        "c3": c3,
+                        "c4": c4,
+                        "c5": c5,
+                        "c6": c6,
+                        "c7": c7,
+                        "d1": d1,
+                        "d2": d2,
+                        "d3": d3,
+                        "d4": d4,
+                        "d5": d5,
+                        "d6": d6,
+                        "d7": d7,
+                        "d8": d8,
+                        "d9": d9,
+                        "d10": d10,
+                        "d11": d11,
+                        "d12": d12,
+                        "d13": d13,
+                        "a_cnt": a_cnt,
+                        "b_cnt": b_cnt,
+                        "c_cnt": c_cnt,
+                        "d_cnt": d_cnt,
                     }
 
                 # 1. upsert у visure (метадані PDF)
@@ -386,7 +474,12 @@ def save_visura(cf: str, immobiles: List[Immobile], pdf_path: Path) -> None:
                         immobile_interno_override,
                         locatore_comune_res,
                         locatore_via,
-                        locatore_civico
+                        locatore_civico,
+                        a1, a2,
+                        b1, b2, b3, b4, b5,
+                        c1, c2, c3, c4, c5, c6, c7,
+                        d1, d2, d3, d4, d5, d6, d7, d8, d9, d10, d11, d12, d13,
+                        a_cnt, b_cnt, c_cnt, d_cnt
                     ) VALUES (
                         %s,  -- visura_cf
                         %s,  -- table_num_immobile
@@ -423,12 +516,43 @@ def save_visura(cf: str, immobiles: List[Immobile], pdf_path: Path) -> None:
                         %s,  -- immobile_interno_override
                         %s,  -- locatore_comune_res
                         %s,  -- locatore_via
-                        %s   -- locatore_civico
+                        %s,  -- locatore_civico
+                        %s,  -- a1
+                        %s,  -- a2
+                        %s,  -- b1
+                        %s,  -- b2
+                        %s,  -- b3
+                        %s,  -- b4
+                        %s,  -- b5
+                        %s,  -- c1
+                        %s,  -- c2
+                        %s,  -- c3
+                        %s,  -- c4
+                        %s,  -- c5
+                        %s,  -- c6
+                        %s,  -- c7
+                        %s,  -- d1
+                        %s,  -- d2
+                        %s,  -- d3
+                        %s,  -- d4
+                        %s,  -- d5
+                        %s,  -- d6
+                        %s,  -- d7
+                        %s,  -- d8
+                        %s,  -- d9
+                        %s,  -- d10
+                        %s,  -- d11
+                        %s,  -- d12
+                        %s,  -- d13
+                        %s,  -- a_cnt
+                        %s,  -- b_cnt
+                        %s,  -- c_cnt
+                        %s   -- d_cnt
                     );
                 """
 
                 for imm in immobiles:
-                    # Підтягуємо старі override-и й адресу локатора, якщо вони були
+                    # Підтягуємо старі override-и, A/B/C/D і адресу локатора, якщо вони були
                     key = (
                         str(getattr(imm, "foglio", "") or ""),
                         str(getattr(imm, "numero", "") or ""),
@@ -445,6 +569,11 @@ def save_visura(cf: str, immobiles: List[Immobile], pdf_path: Path) -> None:
                             "locatore_comune_res",
                             "locatore_via",
                             "locatore_civico",
+                            "a1", "a2",
+                            "b1", "b2", "b3", "b4", "b5",
+                            "c1", "c2", "c3", "c4", "c5", "c6", "c7",
+                            "d1", "d2", "d3", "d4", "d5", "d6", "d7", "d8", "d9", "d10", "d11", "d12", "d13",
+                            "a_cnt", "b_cnt", "c_cnt", "d_cnt",
                         ):
                             current_val = getattr(imm, field, None)
                             if current_val in (None, "") and old.get(field) is not None:
@@ -489,6 +618,37 @@ def save_visura(cf: str, immobiles: List[Immobile], pdf_path: Path) -> None:
                             getattr(imm, "locatore_comune_res", None),
                             getattr(imm, "locatore_via", None),
                             getattr(imm, "locatore_civico", None),
+                            getattr(imm, "a1", None),
+                            getattr(imm, "a2", None),
+                            getattr(imm, "b1", None),
+                            getattr(imm, "b2", None),
+                            getattr(imm, "b3", None),
+                            getattr(imm, "b4", None),
+                            getattr(imm, "b5", None),
+                            getattr(imm, "c1", None),
+                            getattr(imm, "c2", None),
+                            getattr(imm, "c3", None),
+                            getattr(imm, "c4", None),
+                            getattr(imm, "c5", None),
+                            getattr(imm, "c6", None),
+                            getattr(imm, "c7", None),
+                            getattr(imm, "d1", None),
+                            getattr(imm, "d2", None),
+                            getattr(imm, "d3", None),
+                            getattr(imm, "d4", None),
+                            getattr(imm, "d5", None),
+                            getattr(imm, "d6", None),
+                            getattr(imm, "d7", None),
+                            getattr(imm, "d8", None),
+                            getattr(imm, "d9", None),
+                            getattr(imm, "d10", None),
+                            getattr(imm, "d11", None),
+                            getattr(imm, "d12", None),
+                            getattr(imm, "d13", None),
+                            getattr(imm, "a_cnt", None),
+                            getattr(imm, "b_cnt", None),
+                            getattr(imm, "c_cnt", None),
+                            getattr(imm, "d_cnt", None),
                         ),
                     )
 
@@ -512,6 +672,7 @@ def save_visura(cf: str, immobiles: List[Immobile], pdf_path: Path) -> None:
             logger.debug("[PIPELINE] Локальний PDF вже відсутній: %s", pdf_path)
         except Exception as e:
             logger.warning("[PIPELINE] Не вдалося видалити локальний PDF %s: %s", pdf_path, e)
+
 
 
 # ---------------------------------------------------------------------------
@@ -684,6 +845,193 @@ def upsert_overrides_from_yaml(cf: str, adapter: ItemAdapter) -> None:
         if conn is not None:
             conn.close()
 
+def upsert_elements_from_yaml(cf: str, adapter: ItemAdapter) -> None:
+    """
+    Оновлює в таблиці `immobili` поля A1..D13 і підсумкові A_CNT..D_CNT для заданого CF.
+
+    Логіка:
+    - значення з YAML → записуються в БД;
+    - якщо замість значення передано "-" → відповідне поле в БД очищується (NULL);
+    - якщо значення в YAML немає (ключ відсутній або порожній рядок) → БД не чіпаємо;
+    - після оновлення A/B/C/D перераховуємо A_CNT..D_CNT на основі не-NULL полів.
+
+    Якщо для CF кілька immobili і в YAML немає FOGLIO/NUMERO/SUB —
+    нічого не оновлюємо (щоб не розмазувати одну конфігурацію по всіх об'єктах).
+    """
+    # Ключі елементів
+    element_keys = [
+        "a1", "a2",
+        "b1", "b2", "b3", "b4", "b5",
+        "c1", "c2", "c3", "c4", "c5", "c6", "c7",
+        "d1", "d2", "d3", "d4", "d5", "d6", "d7", "d8", "d9", "d10", "d11", "d12", "d13",
+    ]
+
+    # Збираємо зміни з YAML
+    pending: dict[str, tuple[str, str | None]] = {}  # key -> ("set"/"clear", value)
+
+    for key in element_keys:
+        raw = adapter.get(key)
+        if raw is None:
+            continue
+
+        if isinstance(raw, str):
+            val = raw.strip()
+        else:
+            val = str(raw).strip()
+
+        if val == "":
+            # Порожнє → вважаємо "немає оновлення"
+            continue
+
+        if val == "-":
+            # Спеціальний випадок: видалення елемента з БД
+            pending[key] = ("clear", None)
+        else:
+            # Будь-яке непорожнє значення → зберігаємо як є (YAML має пріоритет)
+            pending[key] = ("set", val)
+
+    if not pending:
+        # У YAML немає жодних A/B/C/D → нічого не робимо
+        return
+
+    conn = None
+    try:
+        conn = _get_pg_connection()
+        with conn:
+            with conn.cursor() as cur:
+                # Дивимось, скільки immobili є для цього CF
+                cur.execute(
+                    """
+                    SELECT id, foglio, numero, sub
+                    FROM immobili
+                    WHERE visura_cf = %s;
+                    """,
+                    (cf,),
+                )
+                rows = cur.fetchall()
+
+                if not rows:
+                    logger.warning(
+                        "[DB] upsert_elements_from_yaml: для %s немає записів у immobili "
+                        "(visura ще не збережена?)",
+                        cf,
+                    )
+                    return
+
+                foglio = _clean_str(adapter.get("foglio"))
+                numero = _clean_str(adapter.get("numero"))
+                sub = _clean_str(adapter.get("sub"))
+
+                where_clauses = ["visura_cf = %s"]
+                where_params: list[Any] = [cf]
+
+                if foglio is not None:
+                    where_clauses.append("foglio = %s")
+                    where_params.append(foglio)
+                if numero is not None:
+                    where_clauses.append("numero = %s")
+                    where_params.append(numero)
+                if sub is not None:
+                    where_clauses.append("sub = %s")
+                    where_params.append(sub)
+
+                # Якщо є кілька об'єктів і немає foglio/numero/sub — не знаємо, що оновлювати
+                if len(where_clauses) == 1 and len(rows) > 1:
+                    logger.warning(
+                        "[DB] upsert_elements_from_yaml: для %s є %d immobili, "
+                        "але FOGLIO/NUMERO/SUB у YAML не задані — "
+                        "пропускаємо оновлення A/B/C/D, "
+                        "щоб не застосувати один набір елементів до всіх об'єктів.",
+                        cf,
+                        len(rows),
+                    )
+                    return
+
+                # Будуємо SET-частину
+                set_clauses: list[str] = []
+                set_params: list[Any] = []
+
+                for col, (action, value) in pending.items():
+                    col_name = col  # у БД ті ж імена
+
+                    if action == "clear":
+                        set_clauses.append(f"{col_name} = NULL")
+                    else:
+                        set_clauses.append(f"{col_name} = %s")
+                        set_params.append(value)
+
+                if not set_clauses:
+                    return
+
+                sql_update_elements = f"""
+                    UPDATE immobili
+                    SET {', '.join(set_clauses)}
+                    WHERE {" AND ".join(where_clauses)};
+                """
+                params = set_params + where_params
+                cur.execute(sql_update_elements, params)
+                logger.debug(
+                    "[DB] upsert_elements_from_yaml: для %s оновлено A/B/C/D (%d рядків)",
+                    cf,
+                    cur.rowcount,
+                )
+
+                # Перераховуємо A_CNT..D_CNT для всіх immobili цього CF
+                cur.execute(
+                    """
+                    UPDATE immobili
+                    SET
+                        a_cnt = (
+                            CASE WHEN a1 IS NOT NULL THEN 1 ELSE 0 END +
+                            CASE WHEN a2 IS NOT NULL THEN 1 ELSE 0 END
+                        ),
+                        b_cnt = (
+                            CASE WHEN b1 IS NOT NULL THEN 1 ELSE 0 END +
+                            CASE WHEN b2 IS NOT NULL THEN 1 ELSE 0 END +
+                            CASE WHEN b3 IS NOT NULL THEN 1 ELSE 0 END +
+                            CASE WHEN b4 IS NOT NULL THEN 1 ELSE 0 END +
+                            CASE WHEN b5 IS NOT NULL THEN 1 ELSE 0 END
+                        ),
+                        c_cnt = (
+                            CASE WHEN c1 IS NOT NULL THEN 1 ELSE 0 END +
+                            CASE WHEN c2 IS NOT NULL THEN 1 ELSE 0 END +
+                            CASE WHEN c3 IS NOT NULL THEN 1 ELSE 0 END +
+                            CASE WHEN c4 IS NOT NULL THEN 1 ELSE 0 END +
+                            CASE WHEN c5 IS NOT NULL THEN 1 ELSE 0 END +
+                            CASE WHEN c6 IS NOT NULL THEN 1 ELSE 0 END +
+                            CASE WHEN c7 IS NOT NULL THEN 1 ELSE 0 END
+                        ),
+                        d_cnt = (
+                            CASE WHEN d1 IS NOT NULL THEN 1 ELSE 0 END +
+                            CASE WHEN d2 IS NOT NULL THEN 1 ELSE 0 END +
+                            CASE WHEN d3 IS NOT NULL THEN 1 ELSE 0 END +
+                            CASE WHEN d4 IS NOT NULL THEN 1 ELSE 0 END +
+                            CASE WHEN d5 IS NOT NULL THEN 1 ELSE 0 END +
+                            CASE WHEN d6 IS NOT NULL THEN 1 ELSE 0 END +
+                            CASE WHEN d7 IS NOT NULL THEN 1 ELSE 0 END +
+                            CASE WHEN d8 IS NOT NULL THEN 1 ELSE 0 END +
+                            CASE WHEN d9 IS NOT NULL THEN 1 ELSE 0 END +
+                            CASE WHEN d10 IS NOT NULL THEN 1 ELSE 0 END +
+                            CASE WHEN d11 IS NOT NULL THEN 1 ELSE 0 END +
+                            CASE WHEN d12 IS NOT NULL THEN 1 ELSE 0 END +
+                            CASE WHEN d13 IS NOT NULL THEN 1 ELSE 0 END
+                        )
+                    WHERE visura_cf = %s;
+                    """,
+                    (cf,),
+                )
+                logger.debug(
+                    "[DB] upsert_elements_from_yaml: для %s перераховано A_CNT..D_CNT (%d рядків)",
+                    cf,
+                    cur.rowcount,
+                )
+
+    except Exception as e:
+        logger.exception("[DB] Помилка в upsert_elements_from_yaml(%s): %s", cf, e)
+    finally:
+        if conn is not None:
+            conn.close()
+
 
 # ---------------------------------------------------------------------------
 # Фільтрація Immobile за бажаними критеріями
@@ -760,7 +1108,6 @@ def _pick_override(imm: Immobile, override_attr: str) -> str:
     val = getattr(imm, override_attr, None)
     return _to_str(val)
 
-
 def _pick_locatore_field(
     imm: Immobile,
     adapter: ItemAdapter,
@@ -785,9 +1132,11 @@ def _pick_locatore_field(
 
 def build_params(adapter: ItemAdapter, imm: Immobile) -> Dict[str, str]:
     """
-    ...
-    - Адреса об'єкта — ТІЛЬКИ з imm.immobile_*_override (БД),
-      YAML сюди не лізе.
+    Формує dict params → значення для заповнення DOCX-шаблону атестації.
+
+    ВАЖЛИВО:
+    - Адреса об'єкта — ТІЛЬКИ з imm.immobile_*_override (БД), YAML сюди не лізе.
+    - A/B/C/D елементи — також з БД (Immobile), YAML лише оновлює БД перед цим.
     """
     params: Dict[str, str] = {}
 
@@ -799,6 +1148,7 @@ def build_params(adapter: ItemAdapter, imm: Immobile) -> Dict[str, str]:
 
     surname = imm.locatore_surname
     name = imm.locatore_name
+    # Спочатку ім'я, потім прізвище
     locatore_nome = " ".join(p for p in (name, surname) if p)
     params["{{LOCATORE_NOME}}"] = _to_str(locatore_nome)
 
@@ -834,15 +1184,6 @@ def build_params(adapter: ItemAdapter, imm: Immobile) -> Dict[str, str]:
     # -----------------------------
     # DATI CATASTALI – рядок APPARTAMENTO
     # -----------------------------
-    # Базуємося на одному Immobile, для якого генеруємо цю attestazione.
-    # У шаблоні:
-    #   APP_FOGL  → FOGLIO
-    #   APP_PART  → PARTICELLA (у нас це numero)
-    #   APP_SUB   → SUB
-    #   APP_REND  → RENDITA
-    #   APP_SCAT  → SUPERFICIE CATASTALE
-    #   APP_SRIP  → SUPERFICIE RIPARAMETRATA (поки що = SCAT)
-    #   APP_CAT   → CATEGORIA
     params["{{APP_FOGL}}"] = _to_str(imm.foglio)
     params["{{APP_PART}}"] = _to_str(imm.numero)
     params["{{APP_SUB}}"] = _to_str(imm.sub)
@@ -855,20 +1196,17 @@ def build_params(adapter: ItemAdapter, imm: Immobile) -> Dict[str, str]:
     # -----------------------------
     # DATI CATASTALI – рядок TOTALE SUPERFICIE
     # -----------------------------
-    # Зараз кожна attestazione генерується для ОДНОГО immobile,
-    # тому тотали = значення по цьому ж об'єкту.
     params["{{TOT_SCAT}}"] = _to_str(imm.superficie_totale)
     params["{{TOT_SRIP}}"] = _to_str(imm.superficie_totale)
     params["{{TOT_CAT}}"] = _to_str(imm.categoria)
 
-
     # -----------------------------
-    # Дані договору (поки що тільки з YAML)
+    # Дані договору
     # -----------------------------
     params["{{CONTRATTO_DATA}}"] = _to_str(adapter.get("contratto_data"))
 
     # -----------------------------
-    # CONDUTTORE (орендар) — теж поки що тільки з YAML
+    # CONDUTTORE (орендар)
     # -----------------------------
     params["{{CONDUTTORE_NOME}}"] = _to_str(adapter.get("conduttore_nome"))
     params["{{CONDUTTORE_CF}}"] = _to_str(adapter.get("conduttore_cf"))
@@ -884,19 +1222,52 @@ def build_params(adapter: ItemAdapter, imm: Immobile) -> Dict[str, str]:
     params["{{AGENZIA_ENTRATE_SEDE}}"] = _to_str(adapter.get("agenzia_entrate_sede"))
 
     # -----------------------------
-    # A/B/C/D чекбокси — як і раніше
+    # A/B/C/D елементи — ТІЛЬКИ з БД (Immobile)
     # -----------------------------
-    for key, value in adapter.items():
-        if not isinstance(key, str):
-            continue
-        if not re.fullmatch(r"[abcd][0-9]+", key):
-            continue
+    element_keys = [
+        "a1", "a2",
+        "b1", "b2", "b3", "b4", "b5",
+        "c1", "c2", "c3", "c4", "c5", "c6", "c7",
+        "d1", "d2", "d3", "d4", "d5", "d6", "d7", "d8", "d9", "d10", "d11", "d12", "d13",
+    ]
 
-        v_str = _to_str(value)
-        params[f"{{{{{key}}}}}"] = v_str
-        params[f"{{{{{key.upper()}}}}}"] = v_str
+    for key in element_keys:
+        val = getattr(imm, key, None)
+        val_str = _to_str(val)
+        # Плейсхолдери в шаблоні можуть бути як {{a1}}, так і {{A1}}
+        params[f"{{{{{key}}}}}"] = val_str
+        params[f"{{{{{key.upper()}}}}}"] = val_str
+
+    # -----------------------------
+    # CALCOLO NUMERO ELEMENTI — {{A_CNT}}..{{D_CNT}}
+    # -----------------------------
+    def _count_present(values) -> int:
+        return sum(1 for v in values if v not in (None, ""))
+
+    a_cnt = _count_present([imm.a1, imm.a2])
+    b_cnt = _count_present([imm.b1, imm.b2, imm.b3, imm.b4, imm.b5])
+    c_cnt = _count_present([imm.c1, imm.c2, imm.c3, imm.c4, imm.c5, imm.c6, imm.c7])
+    d_cnt = _count_present(
+        [
+            imm.d1, imm.d2, imm.d3, imm.d4, imm.d5, imm.d6, imm.d7,
+            imm.d8, imm.d9, imm.d10, imm.d11, imm.d12, imm.d13,
+        ]
+    )
+
+    # Можемо паралельно оновити в об'єкті (на випадок, якщо далі це ще десь знадобиться)
+    imm.a_cnt = a_cnt
+    imm.b_cnt = b_cnt
+    imm.c_cnt = c_cnt
+    imm.d_cnt = d_cnt
+
+    # Плейсхолдери в шаблоні CALCOLO NUMERO ELEMENTI
+    params["{{A_CNT}}"] = _to_str(a_cnt)
+    params["{{B_CNT}}"] = _to_str(b_cnt)
+    params["{{C_CNT}}"] = _to_str(c_cnt)
+    params["{{D_CNT}}"] = _to_str(d_cnt)
 
     return params
+
 
 
 # ---------------------------------------------------------------------------
@@ -967,8 +1338,9 @@ class UppiPipeline:
                         "[PIPELINE] CF=%s, fallback на БД для immobili через відсутній PDF",
                         cf,
                     )
-                    # Спочатку оновлюємо overrides з YAML, потім читаємо з БД
+                    # Спочатку оновлюємо overrides і A/B/C/D з YAML, потім читаємо з БД
                     upsert_overrides_from_yaml(cf, adapter)
+                    upsert_elements_from_yaml(cf, adapter)
                     immobiles = load_immobiles_from_db(cf)
                 else:
                     return item
@@ -1026,8 +1398,9 @@ class UppiPipeline:
                     # помилка вже залогована всередині save_visura
                     return item
 
-                # Після збереження — докидуємо overrides з YAML у БД
+                # Після збереження — докидуємо overrides та A/B/C/D з YAML у БД
                 upsert_overrides_from_yaml(cf, adapter)
+                upsert_elements_from_yaml(cf, adapter)
 
                 # І ТІЛЬКИ ТЕПЕР беремо canonical immobiles з БД
                 immobiles = load_immobiles_from_db(cf)
@@ -1047,8 +1420,9 @@ class UppiPipeline:
                 cf,
             )
 
-            # Спочатку оновлюємо overrides з YAML (якщо є)
+            # Спочатку оновлюємо overrides і A/B/C/D з YAML (якщо є)
             upsert_overrides_from_yaml(cf, adapter)
+            upsert_elements_from_yaml(cf, adapter)
 
             immobiles = load_immobiles_from_db(cf)
             if not immobiles:
@@ -1112,8 +1486,9 @@ class UppiPipeline:
                 except Exception:
                     return item
 
-                # Після збереження — YAML-overrides в БД
+                # Після збереження — YAML-overrides + A/B/C/D в БД
                 upsert_overrides_from_yaml(cf, adapter)
+                upsert_elements_from_yaml(cf, adapter)
 
                 # І далі працюємо вже з canonical даними з БД
                 immobiles = load_immobiles_from_db(cf)
@@ -1125,8 +1500,10 @@ class UppiPipeline:
                     return item
             else:
                 # Візура вже є в БД, PDF не чіпаємо
-                # Але YAML може містити нові overrides → оновлюємо й читаємо
+                # Візура вже є в БД, PDF не чіпаємо
+                # Але YAML може містити нові overrides/A/B/C/D → оновлюємо й читаємо
                 upsert_overrides_from_yaml(cf, adapter)
+                upsert_elements_from_yaml(cf, adapter)
 
                 immobiles = load_immobiles_from_db(cf)
                 if not immobiles:

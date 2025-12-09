@@ -47,3 +47,41 @@ class Immobile:
     locatore_comune_res: str | None = None
     locatore_via: str | None = None
     locatore_civico: str | None = None
+
+    # --- Елементи A/B/C/D (з YAML, збережені в БД) ---
+    a1: Optional[str] = None
+    a2: Optional[str] = None
+
+    b1: Optional[str] = None
+    b2: Optional[str] = None
+    b3: Optional[str] = None
+    b4: Optional[str] = None
+    b5: Optional[str] = None
+
+    c1: Optional[str] = None
+    c2: Optional[str] = None
+    c3: Optional[str] = None
+    c4: Optional[str] = None
+    c5: Optional[str] = None
+    c6: Optional[str] = None
+    c7: Optional[str] = None
+
+    d1: Optional[str] = None
+    d2: Optional[str] = None
+    d3: Optional[str] = None
+    d4: Optional[str] = None
+    d5: Optional[str] = None
+    d6: Optional[str] = None
+    d7: Optional[str] = None
+    d8: Optional[str] = None
+    d9: Optional[str] = None
+    d10: Optional[str] = None
+    d11: Optional[str] = None
+    d12: Optional[str] = None
+    d13: Optional[str] = None
+
+    # --- Підсумкові кількості елементів за типами ---
+    a_cnt: Optional[int] = None
+    b_cnt: Optional[int] = None
+    c_cnt: Optional[int] = None
+    d_cnt: Optional[int] = None
