@@ -55,6 +55,13 @@ YAML_TO_ITEM_MAP: Dict[str, str] = {
     "RENDITA": "rendita",
     "SUPERFICIE_TOTALE": "superficie_totale",
 
+    # Поля для розрахунку канону (pescara2018.py): Тип договору, Мебльованість, Енергоклас, Фактичний canone з договору, Тривалість договору.
+    "CONTRACT_KIND": "contract_kind",
+    "ARREDATO": "arredato",
+    "ENERGY_CLASS": "energy_class",
+    "CANONE_CONTRATTUALE_MENSILE": "canone_contrattuale_mensile",
+    "DURATA_ANNI": "durata_anni",
+
     # A/B/C/D — бізнес-логіка (pescara2018.py)
     "A1": "a1",
     "A2": "a2",

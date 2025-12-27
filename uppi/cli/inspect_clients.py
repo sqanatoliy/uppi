@@ -6,8 +6,9 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from decouple import config
-import psycopg2
-from psycopg2.extras import RealDictCursor
+import psycopg
+from psycopg.rows import dict_row
+
 import yaml
 
 
@@ -56,7 +57,7 @@ def get_conn():
     """Підключаємося до Postgres за параметрами з .env."""
     if not DB_HOST or not DB_NAME or not DB_USER or not DB_PASSWORD:
         raise RuntimeError("UPPI DB DB_HOST or DB_NAME or DB_USER or DB_PASSWORD не задано в .env")
-    return psycopg2.connect(
+    return psycopg.connect(
             host=DB_HOST,
             port=DB_PORT,
             dbname=DB_NAME,
@@ -76,21 +77,16 @@ def fetch_visura(conn, cf: str) -> Optional[Dict[str, Any]]:
 
     Тут просто перевіряємо, що запис є, і тягнемо метадані PDF.
     """
-    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+    with conn.cursor(row_factory=dict_row) as cur:
         cur.execute(
             """
-            SELECT
-                cf,
-                pdf_bucket,
-                pdf_object,
-                updated_at
+            SELECT cf, pdf_bucket, pdf_object, updated_at
             FROM visure
             WHERE cf = %s
             """,
             (cf,),
         )
-        row = cur.fetchone()
-        return dict(row) if row else None
+        return cur.fetchone()
 
 
 def build_visura_address(im: Dict[str, Any]) -> str:
@@ -160,7 +156,7 @@ def build_real_address(im: Dict[str, Any]) -> str:
 
 
 def fetch_immobili(conn, cf: str) -> List[Dict[str, Any]]:
-    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+    with conn.cursor(row_factory=dict_row) as cur:
         cur.execute(
             """
             SELECT
@@ -196,8 +192,7 @@ def fetch_immobili(conn, cf: str) -> List[Dict[str, Any]]:
             """,
             (cf,),
         )
-        rows = cur.fetchall()
-        return [dict(r) for r in rows]
+        return cur.fetchall()
 
 
 # ---------------------------

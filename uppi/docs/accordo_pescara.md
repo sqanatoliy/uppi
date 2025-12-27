@@ -188,7 +188,7 @@ Accordo territoriale per il Comune di Pescara - Legge 09.12.1998 n. 431 - D.M. 1
 |TIPOLOGIA ABITAZIONE| UNITA' di MISURA| Sub Fascia1| Sub Fascia2 | Sub Fascia3|
 |:---:|:---:|:---:|:---:|:---:|
 |||Min - Max| Min - Max| Min - Max|
-|abitazione unifamiliare| € x mq |27,94 - 41,91| 41,91 - 55,89|55.89 - 69,86|
+|abitazione unifamiliare| € x mq |27,94 - 41,91| 41,91 - 55,89|55,89 - 69,86|
 |superficie superiore a 111 mq.| € x mq| 27,94 -41,91| 41,91- 48,90| 48,90- 62,87|
 |supericie da 96 a 110 mg. |  € x mq |41,11- 47,96| 47,96- 61,67| 61,67- 75,37|
 |superficie da 71 a 95 mq.| € x mq |52,00- 60,67| 60,67 -69,33| 69,33- 78,00|

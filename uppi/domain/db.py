@@ -1,6 +1,6 @@
 import logging
 
-import psycopg2
+import psycopg
 from decouple import config
 
 logger = logging.getLogger(__name__)
@@ -43,7 +43,7 @@ def _get_pg_connection():
         );
     """
     try:
-        conn = psycopg2.connect(
+        conn = psycopg.connect(
             host=DB_HOST,
             port=DB_PORT,
             dbname=DB_NAME,
@@ -52,7 +52,7 @@ def _get_pg_connection():
             sslmode=DB_SSL_MODE,
         )
         return conn
-    except psycopg2.Error as e:
+    except psycopg.Error as e:
         logger.exception("[DB] Не вдалося підключитися до PostgreSQL: %s", e)
         raise
 
@@ -70,7 +70,7 @@ def db_has_visura(cf: str) -> bool:
             exists = cur.fetchone() is not None
             logger.debug("[DB] db_has_visura(%s) → %s", cf, exists)
             return exists
-    except psycopg2.Error as e:
+    except psycopg.Error as e:
         logger.exception("[DB] Помилка при перевірці visura для %s: %s", cf, e)
         return False
     finally:

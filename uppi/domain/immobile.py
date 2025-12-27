@@ -48,6 +48,15 @@ class Immobile:
     locatore_via: str | None = None
     locatore_civico: str | None = None
 
+    # -------------------------------------------------------------------------
+    # Поля для заповнення DOCX-шаблону: Тип договору, Мебльованість, Енергоклас, Фактичний canone з договору, Тривалість договору.
+    # -------------------------------------------------------------------------
+    contract_kind: str | None = None
+    arredato: str | None = None
+    energy_class: str | None = None
+    canone_contrattuale_mensile: Optional[float] = None
+    durata_anni: Optional[int] = None
+
     # --- Елементи A/B/C/D (з YAML, збережені в БД) ---
     a1: Optional[str] = None
     a2: Optional[str] = None
