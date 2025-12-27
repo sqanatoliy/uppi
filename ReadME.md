@@ -6,26 +6,44 @@
 
 ## Зміст
 
-1. [Що робить проєкт](#що-робить-проєкт)
-2. [Архітектура загалом](#архітектура-загалом)
-3. [Розгортання: крок за кроком](#розгортання-крок-за-кроком)  
-   3.1. Клонування та Python  
-   3.2. Playwright  
-   3.3. PostgreSQL: схема БД  
-   3.4. MinIO / S3  
-   3.5. `.env` конфіг  
-4. [Файлова структура та ключові модулі](#файлова-структура-та-ключові-модулі)  
-5. [Модель даних: таблиці та `Immobile`](#модель-даних-таблиці-та-immobile)  
-6. [Вхідні дані: `clients/clients.yml`](#вхідні-дані-clientsclientsyml)  
-7. [Життєвий цикл одного запуску](#життєвий-цикл-одного-запуску)  
-   7.1. Робота павука (`UppiSpider`)  
-   7.2. Робота pipeline (`UppiPipeline`)  
-   7.3. Порядок шарів: хто кого викликає  
-8. [Збереження та перезапис даних у БД](#збереження-та-перезапис-даних-у-бд)  
-9. [Формування файлу attestazione (DOCX)](#формування-файлу-attestazione-docx)  
-10. [Типові сценарії використання](#типові-сценарії-використання)  
-11. [Як розширювати систему](#як-розширювати-систему)
-12. [CLI утиліта огляду клієнтів](#cli-утиліта-огляду-клієнтів)
+1. [Швидкий старт](#швидкий-старт)
+2. [Що робить проєкт](#що-робить-проєкт)
+3. [Архітектура загалом](#архітектура-загалом)
+4. [Розгортання: крок за кроком](#розгортання-крок-за-кроком)  
+   4.1. Клонування та Python  
+   4.2. Playwright  
+   4.3. PostgreSQL: схема БД  
+   4.4. MinIO / S3  
+   4.5. `.env` конфіг  
+5. [Файлова структура та ключові модулі](#файлова-структура-та-ключові-модулі)  
+6. [Модель даних: таблиці та `Immobile`](#модель-даних-таблиці-та-immobile)  
+7. [Вхідні дані: `clients/clients.yml`](#вхідні-дані-clientsclientsyml)  
+8. [Життєвий цикл одного запуску](#життєвий-цикл-одного-запуску)  
+   8.1. Робота павука (`UppiSpider`)  
+   8.2. Робота pipeline (`UppiPipeline`)  
+   8.3. Порядок шарів: хто кого викликає  
+9. [Збереження та перезапис даних у БД](#збереження-та-перезапис-даних-у-бд)  
+10. [Формування файлу attestazione (DOCX)](#формування-файлу-attestazione-docx)  
+11. [Типові сценарії використання](#типові-сценарії-використання)  
+12. [Як розширювати систему](#як-розширювати-систему)
+13. [CLI утиліта огляду клієнтів](#cli-утиліта-огляду-клієнтів)
+14. [Типові проблеми та поради](#типові-проблеми-та-поради)
+15. [Accordo Territoriale Pescara 2018 і розрахунок canone](#accordo-territoriale-pescara-2018-і-розрахунок-canone)
+
+---
+
+## Швидкий старт
+
+1. Python 3.11 + локальні PostgreSQL та MinIO з bucket `visure` (ключі з `.env`).
+2. `python -m venv venv && source venv/bin/activate` (Windows: `venv\\Scripts\\activate`) → `pip install -r requirements.txt`.
+3. `playwright install chromium`.
+4. Створи `.env` за зразком із розділу про конфіг (AE/SISTER, TWO_CAPTCHA, Postgres, MinIO).
+5. Заповни `clients/clients.yml` хоча б записом з `LOCATORE_CF` (додаткові поля — за потребою).
+6. Запусти `scrapy crawl uppi`:  
+   - якщо `FORCE_UPDATE_VISURA=false` і в БД вже є візура — будемо працювати з кешем;  
+   - інакше піде в SISTER, скачає PDF і оновить БД/MinIO.
+7. DOCX-аттестації з’являться у `downloads/<CF>/ATTESTAZIONE_<...>.docx`. PDF-візура після завантаження у MinIO локально видаляється (залишається у `visure/<cf>.pdf` у bucket).
+8. Для швидкої перевірки без SISTER використовуй `python -m uppi.cli.inspect_clients --last` або `--cf <CF>`.
 
 ---
 
@@ -77,21 +95,21 @@
 
 ## Розгортання: крок за кроком
 
-### 3.1. Клонування та Python
+### 4.1. Клонування та Python
 
 ```bash
 git clone <url-на-репозиторій> uppi
 cd uppi
 
 python -m venv venv
-source venv/bin/activate  # Windows: venv\Scriptsctivate
+source venv/bin/activate  # Windows: venv\\Scripts\\activate
 
 pip install -r requirements.txt
 ```
 
 Проєкт орієнтований на **Python 3.11**.
 
-### 3.2. Playwright
+### 4.2. Playwright
 
 ```bash
 playwright install chromium
@@ -99,7 +117,7 @@ playwright install chromium
 
 Scrapy-Playwright повинен мати хоча б Chromium.
 
-### 3.3. PostgreSQL: схема БД
+### 4.3. PostgreSQL: схема БД
 
 Створити БД та користувача (імена/пароль можна змінити, але мають відповідати `.env`):
 
@@ -177,7 +195,7 @@ CREATE INDEX idx_immobili_foglio_numero_sub ON immobili(visura_cf, foglio, numer
 
 > **Важливо:** цей DDL має узгоджуватись з полями dataclass `Immobile` та SQL у `load_immobiles_from_db()` / `save_visura()`.
 
-### 3.4. MinIO / S3
+### 4.4. MinIO / S3
 
 Для dev-середовища за замовчуванням очікується локальний MinIO:
 
@@ -188,7 +206,7 @@ CREATE INDEX idx_immobili_foglio_numero_sub ON immobili(visura_cf, foglio, numer
 
 Якщо використовуєш Docker — підніми MinIO з цими параметрами, або зміни їх у `.env`.
 
-### 3.5. `.env` конфіг
+### 4.5. `.env` конфіг
 
 Створи `.env` у корені проєкту. Мінімальний набір:
 
@@ -347,7 +365,7 @@ class Immobile:
   # Параметри пошуку в SISTER
   COMUNE: PESCARA
   TIPO_CATASTO: F
-  UFFICIO_PROВINCIALE_LABEL: PESCARA Territorio
+  UFFICIO_PROVINCIALE_LABEL: PESCARA Territorio
 
   # Адреса орендодавця
   LOCATORE_COMUNE_RES: Pescara
@@ -360,8 +378,8 @@ class Immobile:
   IMMOBILE_CIVICO: 316
 
   # Ідентифікатор об’єкта в катастро (щоб прив’язати override до конкретного immobile)
-  IMMOBILE_PIANО: 4
-  IMMOBILE_INTERНО: 55
+  IMMOBILE_PIANO: 4
+  IMMOBILE_INTERNO: 55
   FOGLIO: 11
   NUMERO: 138
   SUB:
@@ -370,18 +388,18 @@ class Immobile:
   CATEGORIA:
 
   # Договір
-  CONTRATТО_DATA: 15/10/2025
+  CONTRATTO_DATA: 15/10/2025
 
   # Орендар
-  CONDUTТОRE_NОМЕ: Bianocchi Giovana
-  CONDUTТОRE_CF: BCCGNN44M45G488W
-  CONDUTТОRE_COMUNE: Pescara
-  CONDUTТОRE_VIA: Verdi
+  CONDUTTORE_NOME: Bianocchi Giovana
+  CONDUTTORE_CF: BCCGNN44M45G488W
+  CONDUTTORE_COMUNE: Pescara
+  CONDUTTORE_VIA: Verdi
 
   # Реєстрація
   DECORRENZA_DATA: 19/10/2025
   REGISTRAZIONE_DATA: 20/10/2025
-  REGISTРАZIONE_NUM: 12345
+  REGISTRAZIONE_NUM: 12345
   AGENZIA_ENTRATE_SEDE: Pescara
 
   # Флаги A/B/C/D
@@ -394,6 +412,13 @@ class Immobile:
   B5: X
   ...
 ```
+
+Швидкі нотатки про `clients.yml`:
+
+- мінімально достатньо `LOCATORE_CF` (інші поля — за потребою, `FORCE_UPDATE_VISURA` за замовчуванням false);
+- файл читається послідовно згори вниз, можна мати кілька записів з одним CF (наприклад, щоб проставити різні override-и);
+- шлях до файлу можна перевизначити змінною `UPPI_CLIENTS_YAML` (корисно для тестових списків або під час запуску CLI-утиліти);
+- щоб override застосувався до конкретного об’єкта, задавай `FOGLIO`/`NUMERO`/`SUB`; якщо їх нема і в CF кілька об’єктів — захистом нічого не буде оновлено.
 
 ### Як YAML мапиться у внутрішній item
 
@@ -413,7 +438,7 @@ class Immobile:
 
 ## Життєвий цикл одного запуску
 
-### 7.1. Робота павука (`UppiSpider`)
+### 8.1. Робота павука (`UppiSpider`)
 
 Запуск:
 
@@ -451,7 +476,7 @@ scrapy crawl uppi
 
    - в `finally` завжди пробує зробити logout через `_logout_in_context()`.
 
-### 7.2. Робота pipeline (`UppiPipeline`)
+### 8.2. Робота pipeline (`UppiPipeline`)
 
 Кожний `UppiItem` проходить через `UppiPipeline.process_item()`.
 
@@ -464,7 +489,7 @@ scrapy crawl uppi
 
 2. Гілки:
 
-#### 7.2.1. `visura_source = "sister"`
+#### 8.2.1. `visura_source = "sister"`
 
 Кейс: свіжескачаний PDF.
 
@@ -483,14 +508,14 @@ scrapy crawl uppi
   - `immobiles = load_immobiles_from_db(cf)`:
     - читає canonical-дані з БД у список `Immobile`.
 
-#### 7.2.2. `visura_source = "db_cache"`
+#### 8.2.2. `visura_source = "db_cache"`
 
 Кейс: візура вже є в БД, PDF не качається.
 
 - `upsert_overrides_from_yaml(cf, adapter)` — якщо в поточному запуску є якісь override-и в YAML.
 - `immobiles = load_immobiles_from_db(cf)`.
 
-#### 7.2.3. `visura_source is None` (backward-compat)
+#### 8.2.3. `visura_source is None` (backward-compat)
 
 Кейс: старий формат item’ів.
 
@@ -504,7 +529,7 @@ scrapy crawl uppi
   - `upsert_overrides_from_yaml(cf, adapter)`,
   - `immobiles = load_immobiles_from_db(cf)`.
 
-#### 7.2.4. Фільтрація та генерація DOCX
+#### 8.2.4. Фільтрація та генерація DOCX
 
 Після отримання `immobiles`:
 
@@ -513,11 +538,11 @@ scrapy crawl uppi
 2. Для кожного `imm` у `selected_immobiles`:
 
    - `params = build_params(adapter, imm)` — будує словник `{{KEY}} → value` для шаблону.
-   - `output_path = get_attestazione_path(cf, imm)` — формує унікальну назву DOCX (CF + ключові катастро-параметри).
+   - `output_path = get_attestazione_path(cf, imm)` — формує унікальну назву DOCX (CF + ключові катастро-параметри) і пише в `downloads/<CF>/ATTESTAZIONE_<CF>_<slug>.docx` (каталог створюється автоматично).
    - `fill_attestazione_template(template_path, output_folder, output_path.name, params, underscored)`:
      - заповнює плейсхолдери в DOCX і зберігає файл.
 
-### 7.3. Порядок шарів: коли що викликається
+### 8.3. Порядок шарів: коли що викликається
 
 Для одного клієнта логіка виглядає так:
 
@@ -621,16 +646,16 @@ params["{{RENDITA}}"]
 params["{{SUPERFICIE_TOTALE}}"]
 params["{{CATEGORIA}}"]
 
-params["{{CONTRATТО_DATA}}"]
+params["{{CONTRATTO_DATA}}"]
 
-params["{{CONDUTТОRE_NОМЕ}}"]
-params["{{CONDUTТОRE_CF}}"]
-params["{{CONDUTТОRE_COMUNE}}"]
-params["{{CONDUTТОРЕ_VIA}}"]
+params["{{CONDUTTORE_NOME}}"]
+params["{{CONDUTTORE_CF}}"]
+params["{{CONDUTTORE_COMUNE}}"]
+params["{{CONDUTTORE_VIA}}"]
 
 params["{{DECORRENZA_DATA}}"]
-params["{{REGISTРАZIONE_DATA}}"]
-params["{{REGISTРАZIONE_NUM}}"]
+params["{{REGISTRAZIONE_DATA}}"]
+params["{{REGISTRAZIONE_NUM}}"]
 params["{{AGENZIA_ENTRATE_SEDE}}"]
 
 # для чекбоксів:
@@ -721,7 +746,7 @@ underscored = {
 
 Результат:
 
-- `upsert_overrides_from_yaml` оновлює `locаторе_*` у `immobili` (для конкретного immobile або для єдиного об’єкта),
+- `upsert_overrides_from_yaml` оновлює `locatore_*` у `immobili` (для конкретного immobile або для єдиного об’єкта),
 - усі нові attestazioni будуть з новою адресою.
 
 ### 4. Перейменування вулиці об’єкта
@@ -861,3 +886,392 @@ python -m uppi.cli.inspect_clients --cf CCMMRT71S44H501X  # подивитися
    - якщо візура вже є — по кількості об'єктів і адресах вирішуєш, чи треба дописувати селектори/override-и в YAML,
      чи можна одразу формувати attestazione по всіх об'єктах для цього CF.
 
+---
+
+## Типові проблеми та поради
+
+- **Playwright не знаходить браузер**: помилка на старті → виконай `playwright install chromium` у venv.
+- **Отримався кеш замість свіжої візури**: якщо у SISTER вже є зміни — в YAML постав `FORCE_UPDATE_VISURA: true`, щоб змусити spider перекачати PDF.
+- **Схема БД не збігається**: помилки `column does not exist` у `immobili`/`visure` → звір DDL з розділу про БД та dataclass `Immobile`, накати ALTER/CREATE.
+- **MinIO/S3 відмовляє**: якщо `S3Error` при заливці PDF, перевір `MINIO_*`, bucket `visure` і флаг `MINIO_SECURE` (False для локального MinIO).
+- **CAPTCHA не вирішується**: перевір `TWO_CAPTCHA_API_KEY` і баланс; на час відладки можна запускатися з `FORCE_UPDATE_VISURA=false`, щоб брати дані з БД.
+- **Не бачу артефактів**: DOCX лежать у `downloads/<CF>/`, локальний PDF видаляється після заливки в bucket `visure/<cf>.pdf`; для залипань Playwright можна почистити `state.json` / `captcha_images` і перезапустити.
+
+---
+
+## Accordo Territoriale Pescara 2018 і розрахунок canone
+
+Цей розділ описує, як у проєкті реалізовано розрахунок орендної плати за **Accordo Territoriale Pescara 2018**, як працюють елементи **A/B/C/D**, нові поля контракту та як усе це проходить через `pipelines.py` до DOCX-шаблону.
+
+### 15.1. База тарифів Pescara 2018 (`pescara2018_data.py`)
+
+Модуль:
+
+```text
+uppi/domain/pescara2018_data.py
+```
+
+містить "статичну" таблицю діапазонів орендної плати по зонам, типологіям і підзонам:
+
+```python
+# Схема:
+# BASE_RANGES[zona][tipologia][subfascia] = (min_eur_mq, max_eur_mq)
+
+from uppi.domain.canone_models import Tipologia
+
+BASE_RANGES = {
+    1: {
+        Tipologia.UNIFAMILIARE: {
+            1: (48.90, 62.87),
+            2: (62.87, 69.86),
+            3: (69.86, 76.84),
+        },
+        Tipologia.OLTRE_111: {
+            1: (48.90, 55.89),
+            2: (55.89, 62.87),
+            3: (62.87, 69.86),
+        },
+        ...
+    },
+    2: { ... },
+    3: { ... },
+    4: { ... },
+}
+```
+
+Дві додаткові мапи дозволяють визначити **зону** не тільки за microzona, але і за foglio:
+
+```python
+MICROZONA_TO_ZONA: dict[str, int] = {
+    "1": 1,
+    "2": 1,
+    "4": 1,
+    "5": 2,
+    "7": 2,
+    ...
+}
+
+FOGLIO_TO_ZONA: dict[str, int] = {
+    "2": 1,
+    "3": 1,
+    "4": 1,
+    "5": 1,
+    "8": 1,
+    ...
+    "24": 4,
+    "30": 4,
+    "31": 4,
+    ...
+}
+```
+
+Якщо `micro_zona` вказана коректно — вона має пріоритет. Якщо ні, зона визначається за `FOGLIO`. Суперечливі foglio (що можуть належати до різних зон) у файлі просто закоментовані й розбираються вручну.
+
+### 15.2. Моделі для розрахунку canone (`canone_models.py`)
+
+В модулі:
+
+```text
+uppi/domain/canone_models.py
+```
+
+оголошені основні моделі та енум:
+
+- `Tipologia` — категорія за площею (як в Accordo Pescara):
+
+  ```python
+  class Tipologia(Enum):
+      UNIFAMILIARE = "UNIFAMILIARE"
+      OLTRE_111 = "OLTRE_111"
+      DA_96_A_110 = "DA_96_A_110"
+      DA_71_A_95 = "DA_71_A_95"
+      DA_51_A_70 = "DA_51_A_70"
+      FINO_A_50 = "FINO_A_50"
+  ```
+
+- `CanoneInput` — дані, на основі яких рахується орендна плата:
+
+  - катастро: `foglio`, `numero`, `sub`, `superficie_catastale`, `superficie_riparametrata`;
+  - зона: `zona` (з `MICROZONA_TO_ZONA` або `FOGLIO_TO_ZONA`);
+  - типологія: `tipologia` (`Tipologia`);
+  - контракт: `contract_kind`, `arredato`, `energy_class`, `canone_contrattuale_mensile`, `durata_anni`;
+  - елементи A/B/C/D: або окремі флаги, або вже пораховані `a_cnt`, `b_cnt`, `c_cnt`, `d_cnt`.
+
+- `CanoneResult` — результат розрахунку:
+
+  - `zona`, `tipologia`,
+  - `superficie_catastale`, `superficie_riparametrata`,
+  - `canone_min_mq`, `canone_max_mq` — діапазон €/m² згідно Accordo,
+  - `canone_min_mese`, `canone_max_mese` — помножено на площу,
+  - `canone_base_mese` — обрана точка всередині діапазону,
+  - `canone_contrattuale_mensile` — фактична сума з YAML/БД,
+  - `canone_ammissibile` — чи входить договірний canone у дозволений коридор,
+  - додаткові службові поля, які виводяться в шаблон через плейсхолдери `CAN_*`, `GAR_*`, `PST_*`.
+
+Реальна реалізація може мати трохи інші назви полів, але загальна ідея саме така: **весь складний розрахунок захований у окремий доменний модуль**, а pipeline лише збирає вхідні дані і виводить результат у DOCX.
+
+### 15.3. Оновлена схема таблиці `immobili`
+
+Після додавання елементів A/B/C/D і базових полів контракту схема `immobili` розширена.
+
+Оновлена версія (ключові поля зверху пропущено для стислості, див. повний DDL вище; нижче — лише додатки):
+
+```sql
+-- Елементи A/B/C/D (як прапорці / текстові позначки)
+a1 TEXT,
+a2 TEXT,
+
+b1 TEXT,
+b2 TEXT,
+b3 TEXT,
+b4 TEXT,
+b5 TEXT,
+
+c1 TEXT,
+c2 TEXT,
+c3 TEXT,
+c4 TEXT,
+c5 TEXT,
+c6 TEXT,
+c7 TEXT,
+
+d1  TEXT,
+d2  TEXT,
+d3  TEXT,
+d4  TEXT,
+d5  TEXT,
+d6  TEXT,
+d7  TEXT,
+d8  TEXT,
+d9  TEXT,
+d10 TEXT,
+d11 TEXT,
+d12 TEXT,
+d13 TEXT,
+
+-- Автоматично пораховані кількості елементів
+a_cnt INTEGER,
+b_cnt INTEGER,
+c_cnt INTEGER,
+d_cnt INTEGER,
+
+-- Параметри контракту/енергоефективності/фактичного canone
+contract_kind TEXT,                  -- CONCORDATO | TRANSITORIO | STUDENTI
+arredato BOOLEAN,                    -- true/false
+energy_class TEXT,                   -- A..G
+canone_contrattuale_mensile NUMERIC, -- фактичний canone місяць
+durata_anni INTEGER                  -- тривалість договору
+```
+
+> Уся ця інформація зберігається **на рівні конкретного immobile** (рядка в `immobili`).
+
+### 15.4. Нові поля у `clients/clients.yml`
+
+Типовий запис у `clients/clients.yml` тепер може містити не лише A/B/C/D, а й параметри контракту:
+
+```yaml
+- LOCATORE_CF: CCMMRT71S44H501X
+  FORCE_UPDATE_VISURA: false
+
+  # ... інші поля (SISTER, адреси, катастро) ...
+
+  # Contract specifics
+  CONTRACT_KIND: CONCORDATO      # CONCORDATO, TRANSITORIO, STUDENTI
+
+  # Furnishing status
+  ARREDATO: true                 # true/false
+
+  # Energy class
+  ENERGY_CLASS: B                # A, B, C, D, E, F, G
+
+  # Monthly rent (actual)
+  CANONE_CONTRATTUALE_MENSILE: 750.0
+
+  # Duration in years
+  DURATA_ANNI: 3
+
+  # Elements A/B/C/D
+  A1: X
+  A2: X
+  B1:
+  B2:
+  B3: X
+  B4: X
+  B5: X
+
+  C1:
+  C2:
+  C3: X
+  C4:
+  C5: X
+  C6: X
+  C7: X
+
+  D1: X
+  D2:
+  D3:
+  D4: X
+  D5:
+  D6:
+  D7: X
+  D8: X
+  D9: X
+  D10:
+  D11: X
+  D12: X
+  D13: X
+```
+
+Правила мапінгу YAML → БД:
+
+- якщо ключ **взагалі відсутній** → поле в БД не чіпається;
+- якщо ключ є, але значення **порожній рядок** → вважаємо "немає оновлення", БД не чіпається;
+- для A/B/C/D:
+  - значення `"-"` → **очищуємо** відповідну колонку (ставимо `NULL`);
+  - будь-яке інше непорожнє значення (`"X"`, текст тощо) → пишемо як є в колонку;
+  - після оновлення запускається перерахунок `A_CNT`, `B_CNT`, `C_CNT`, `D_CNT` у SQL.
+- для контрактних полів (`CONTRACT_KIND`, `ARREDATO`, `ENERGY_CLASS`, `CANONE_CONTRATTUALE_MENSILE`, `DURATA_ANNI`) — значення з YAML мають пріоритет над тим, що вже лежить у БД.
+
+### 15.5. `upsert_elements_from_yaml()` і `upsert_contract_from_yaml()`
+
+У `uppi/pipelines.py` з’явились допоміжні функції для оновлення даних у `immobili` перед розрахунком canone.
+
+#### 15.5.1. `upsert_elements_from_yaml(cf, adapter)`
+
+Відповідає за елементи A/B/C/D:
+
+1. Збирає всі можливі ключі (`a1..a2`, `b1..b5`, `c1..c7`, `d1..d13`) із item’а (YAML → `ItemAdapter`).
+2. Для кожного:
+   - відсутній / порожній → пропускає;
+   - `"-"` → очищує колонку (`SET col = NULL`);
+   - інше значення → `SET col = <value>`.
+3. Визначає, який рядок(и) оновлювати:
+   - завжди фільтрує по `visura_cf = cf`;
+   - додатково враховує `FOGLIO`, `NUMERO`, `SUB`, якщо вони задані в YAML;
+   - якщо для CF кілька `immobili`, а `FOGLIO`/`NUMERO`/`SUB` **не задані** — нічого не оновлює (захист від масового перезапису).
+4. Після оновлення перераховує `A_CNT..D_CNT` SQL-ом для всіх рядків з відповідним `visura_cf`.
+
+Приклад логів (спрощено):
+
+```text
+[DB] upsert_elements_from_yaml: для CCMMRT71S44H501X оновлено A/B/C/D (1 рядків)
+[DB] upsert_elements_from_yaml: для CCMMRT71S44H501X перераховано A_CNT..D_CNT (3 рядків)
+```
+
+#### 15.5.2. `upsert_contract_from_yaml(cf, adapter)`
+
+Оновлює контрактні поля у `immobili`:
+
+- шукає всі рядки по `visura_cf = cf`;
+- якщо в YAML задано `FOGLIO`/`NUMERO`/`SUB` — оновлює **конкретний** об’єкт;
+- якщо для CF один `immobile` — можна оновлювати без уточнення;
+- використовує ті ж правила "YAML має пріоритет, але порожній рядок не чіпає БД", що й `upsert_overrides_from_yaml`;
+- зберігає: `contract_kind`, `arredato`, `energy_class`, `canone_contrattuale_mensile`, `durata_anni`.
+
+У логах видно щось на кшталт:
+
+```text
+[DB] upsert_contract_from_yaml: для CCMMRT71S44H501X оновлено контрактні поля (1 рядків)
+```
+
+### 15.6. Розрахунок canone в `UppiPipeline.process_item()`
+
+Після того як `immobili` завантажено з БД і відфільтровано (`filter_immobiles`), pipeline робить для кожного об’єкта:
+
+1. Оновлює/підтягує в БД:
+   - override-адреси (`upsert_overrides_from_yaml`),
+   - елементи A/B/C/D (`upsert_elements_from_yaml`),
+   - дані контракту (`upsert_contract_from_yaml`).
+2. Ще раз читає canonical `immobili` (якщо потрібно) — щоб мати вже "остаточні" дані.
+3. По кожному `imm` будує `CanoneInput`:
+   - площа → `imm.superficie_totale` (та/або `SUPERFICIE_TOTALE_OVERRIDE`, якщо реалізовано);
+   - зона → з `imm.micro_zona` або `FOGLIO_TO_ZONA`;
+   - типологія → за площею (`Tipologia.from_superficie(...)` або аналогічна функція);
+   - контракт → з полів `contract_kind`, `arredato`, `energy_class`, `canone_contrattuale_mensile`, `durata_anni` (БД вже враховує YAML);
+   - елементи → `imm.a_cnt`, `imm.b_cnt`, `imm.c_cnt`, `imm.d_cnt`.
+4. Викликає `compute_base_canone(canone_input)` (у модулі типу `canone_pescara2018.py`):
+   - якщо повертається `CanoneResult` → використовує його в `build_params`;
+   - якщо не вдається порахувати (нема зони, площі, tipologia) → лог `[CANONE]` + шаблон генерується, але всі `CAN_*` / `GAR_*` / `PST_*` лишаються пустими.
+
+У логах це виглядає приблизно так:
+
+```text
+[CANONE] Canone per CF=..., imm=1: canone_contrattuale 750.0 в межах діапазону [X, Y]
+```
+
+або, якщо щось не так:
+
+```text
+[CANONE] Неочікувана помилка при розрахунку canone для CF=..., imm=1: <details>
+```
+
+### 15.7. Нові плейсхолдери в DOCX-шаблоні
+
+Окрім вже наявних плейсхолдерів для адрес/катастро/дат, `build_params` тепер заповнює спеціальні поля для таблиць Accordo/Calcolo Canone.
+
+Приклади (фактичний список дивись у коді `build_params`):
+
+- **Підсумок елементів A/B/C/D** (таблиця *CALCOLO NUMERO ELEMENTI*):
+
+  ```python
+  params["{{A_CNT}}"] = str(imm.a_cnt)
+  params["{{B_CNT}}"] = str(imm.b_cnt)
+  params["{{C_CNT}}"] = str(imm.c_cnt)
+  params["{{D_CNT}}"] = str(imm.d_cnt)
+  ```
+
+- **Скорочений блок CAN*** (паспорт розрахунку canone):
+
+  ```python
+  params["{{CAN_SUP_CAT}}"]   = _to_str(canone_result.superficie_catastale)
+  params["{{CAN_SUP_RIP}}"]   = _to_str(canone_result.superficie_riparametrata)
+  params["{{CAN_ZONE_MIN}}"]  = _to_str(canone_result.canone_min_mq)
+  params["{{CAN_ZONE_MAX}}"]  = _to_str(canone_result.canone_max_mq)
+  params["{{CAN_CANONE_MIN}}"]   = _to_str(canone_result.canone_min_mese)
+  params["{{CAN_CANONE_MAX}}"]   = _to_str(canone_result.canone_max_mese)
+  params["{{CAN_CANONE_BASE}}"]  = _to_str(canone_result.canone_base_mese)
+  params["{{CAN_CANONE_CONTR}}"] = _to_str(canone_result.canone_contrattuale_mensile)
+  params["{{CAN_DURATA}}"]       = _to_str(canone_input.durata_anni)
+  params["{{CAN_TIPO_CONTR}}"]   = _to_str(canone_input.contract_kind)
+  params["{{CAN_CLASSE_EN}}"]    = _to_str(canone_input.energy_class)
+  ```
+
+- **Проміжні таблиці GAR_/PST_** (якщо реалізовано в шаблоні):
+
+  ```python
+  params["{{GAR_ABC_MQ}}"]      = _to_str(canone_result.gar_abc_mq)
+  params["{{GAR_ABC_EUR_MQ}}"]  = _to_str(canone_result.gar_abc_eur_mq)
+  params["{{GAR_D_MQ}}"]        = _to_str(canone_result.gar_d_mq)
+  params["{{GAR_D_EUR_MQ}}"]    = _to_str(canone_result.gar_d_eur_mq)
+  params["{{GAR_TOT_MQ}}"]      = _to_str(canone_result.gar_tot_mq)
+  params["{{GAR_TOT_EUR_MQ}}"]  = _to_str(canone_result.gar_tot_eur_mq)
+
+  params["{{PST_SUP_CAT}}"]         = _to_str(canone_result.superficie_catastale)
+  params["{{PST_SUP_RIP}}"]         = _to_str(canone_result.superficie_riparametrata)
+  params["{{PST_CANONE_MIN}}"]      = _to_str(canone_result.canone_min_mese)
+  params["{{PST_CANONE_MAX}}"]      = _to_str(canone_result.canone_max_mese)
+  params["{{PST_CANONE_PATTUITO}}"] = _to_str(canone_result.canone_contrattuale_mensile)
+  ```
+
+Головний принцип: **всі складні числа рахує доменний модуль**, pipeline лише ретельно переносить їх у шаблон.
+
+### 15.8. Підсумок робочого флоу з урахуванням canone
+
+Для одного immobile тепер повний цикл виглядає так:
+
+1. **YAML** → `item_mapper` → `UppiItem`.
+2. **Spider**:
+   - або качає PDF з SISTER (`visura_source="sister"`),
+   - або використовує вже наявну візуру в БД (`visura_source="db_cache"`).
+3. **Pipeline**:
+   - за потреби парсить PDF (`VisuraParser`) і зберігає дані в `visure` + `immobili` (`save_visura`);
+   - оновлює override-адреси (`upsert_overrides_from_yaml`);
+   - оновлює елементи A/B/C/D (`upsert_elements_from_yaml` → `a_cnt..d_cnt`);
+   - оновлює контрактні поля (`upsert_contract_from_yaml`);
+   - завантажує canonical `immobili` з БД (`load_immobiles_from_db`);
+   - фільтрує потрібний об’єкт (`filter_immobiles`);
+   - формує `CanoneInput` та викликає `compute_base_canone` → отримує `CanoneResult`;
+   - будує `params` для DOCX (`build_params`), включаючи всі `CAN_*`, `GAR_*`, `PST_*` поля;
+   - викликає `fill_attestazione_template` і зберігає `ATTESTAZIONE_*.docx`.
+
+Таким чином, **вся бізнес-логіка Accordo Pescara 2018** тепер прозоро проходить через БД і pipeline, а шаблон DOCX відображає як вихідні дані (візура, YAML), так і фінальний розрахунок canone.
