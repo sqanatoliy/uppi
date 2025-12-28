@@ -33,9 +33,13 @@ from uppi.ae.captcha import solve_captcha_if_present
 from uppi.ae.download import download_document
 from uppi.ae.sister_navigation import open_sister_service, navigate_to_visure_catastali
 from uppi.ae.uppi_selectors import UppiSelectors
+from uppi.config import AppConfig
 from uppi.domain.clients import load_clients
-from uppi.domain.db import db_has_visura
+from uppi.domain.db import get_pg_connection
 from uppi.items import UppiItem
+from uppi.services.db_repo import fetch_visura_state
+from uppi.services.storage_minio import StorageService
+from uppi.services.visura_policy import should_download_visura
 from uppi.utils.item_mapper import map_yaml_to_item
 from uppi.utils.playwright_helpers import apply_stealth, log_requests, get_webgl_vendor
 from uppi.utils.stealth import STEALTH_SCRIPT
@@ -96,6 +100,9 @@ class UppiSpider(scrapy.Spider):
         self.clients_to_fetch = []
         self.logger.info("[START] Loaded %d clients from clients.yml", len(clients))
 
+        app_config = AppConfig.from_env()
+        storage_service = StorageService()
+
         # Вирішуємо, кого потрібно качати з SISTER
         for client in clients:
             cf = client.get("LOCATORE_CF")
@@ -106,17 +113,39 @@ class UppiSpider(scrapy.Spider):
             force_update = bool(client.get("FORCE_UPDATE_VISURA"))
 
             try:
-                has_visura = db_has_visura(cf)
+                conn = get_pg_connection()
+                try:
+                    db_state = fetch_visura_state(conn, cf)
+                    conn.commit()
+                finally:
+                    conn.close()
             except Exception as e:
                 self.logger.exception("[DB] Error checking visura presence for %s: %s", cf, e)
                 # Якщо БД не відповіла — краще спробувати сходити в SISTER, ніж пропустити
-                has_visura = False
+                db_state = None
 
-            if has_visura and not force_update:
+            bucket = storage_service.storage.cfg.visure_bucket
+            obj_name = storage_service.storage.visura_object_name(cf)
+            minio_exists = False
+            try:
+                minio_exists = storage_service.object_exists(bucket, obj_name)
+            except Exception as e:
+                self.logger.warning("[S3] Cannot check visura object %s/%s: %s", bucket, obj_name, e)
+                minio_exists = False
+
+            decision = should_download_visura(
+                force_update=force_update,
+                ttl_days=app_config.visura_cache.ttl_days,
+                db_state=db_state,
+                minio_exists=minio_exists,
+            )
+
+            if not decision.should_download:
                 # Візура вже є в БД — SISTER не чіпаємо
                 self.logger.info(
-                    "[START] Skip SISTER for %s, visura already in DB and FORCE_UPDATE_VISURA is false",
+                    "[START] Skip SISTER for %s (reason=%s)",
                     cf,
+                    decision.reason,
                 )
                 mapped = map_yaml_to_item(client)
                 mapped.setdefault("locatore_cf", cf)
@@ -131,10 +160,10 @@ class UppiSpider(scrapy.Spider):
             else:
                 # Потрібно сходити в SISTER
                 self.logger.info(
-                    "[START] Will fetch visura from SISTER for %s (force_update=%s, in_db=%s)",
+                    "[START] Will fetch visura from SISTER for %s (force_update=%s, reason=%s)",
                     cf,
                     force_update,
-                    has_visura,
+                    decision.reason,
                 )
                 self.clients_to_fetch.append(client)
 
