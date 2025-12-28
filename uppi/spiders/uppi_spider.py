@@ -22,10 +22,10 @@
 
 import os
 import shutil
+from dataclasses import asdict
 from typing import Any, Dict, List, Optional
 
 import scrapy
-from decouple import config
 from playwright.async_api import Page, TimeoutError as PlaywrightTimeoutError
 
 from uppi.ae.auth import authenticate_user
@@ -33,22 +33,26 @@ from uppi.ae.captcha import solve_captcha_if_present
 from uppi.ae.download import download_document
 from uppi.ae.sister_navigation import open_sister_service, navigate_to_visure_catastali
 from uppi.ae.uppi_selectors import UppiSelectors
-from uppi.domain.clients import load_clients
-from uppi.domain.db import db_has_visura
+from uppi.config import load_ae_config, load_clients, load_visura_policy_config
+from uppi.domain.models import ClientConfig
 from uppi.items import UppiItem
-from uppi.utils.item_mapper import map_yaml_to_item
+from uppi.services import DatabaseRepository, DbConnectionManager
+from uppi.services.storage_minio import StorageService
+from uppi.services.visura_fetcher import should_download_visura
 from uppi.utils.playwright_helpers import apply_stealth, log_requests, get_webgl_vendor
 from uppi.utils.stealth import STEALTH_SCRIPT
 
-# Конфіг з env
-AE_LOGIN_URL = config("AE_LOGIN_URL")
-AE_URL_SERVIZI = config("AE_URL_SERVIZI")
-SISTER_LOGOUT_URL = config("SISTER_LOGOUT_URL")
+AE_CONFIG = load_ae_config()
+VISURA_POLICY = load_visura_policy_config()
 
-TWO_CAPTCHA_API_KEY = config("TWO_CAPTCHA_API_KEY")
-AE_USERNAME = config("AE_USERNAME")
-AE_PASSWORD = config("AE_PASSWORD")
-AE_PIN = config("AE_PIN")
+AE_LOGIN_URL = AE_CONFIG.login_url
+AE_URL_SERVIZI = AE_CONFIG.servizi_url
+SISTER_LOGOUT_URL = AE_CONFIG.logout_url
+
+TWO_CAPTCHA_API_KEY = AE_CONFIG.two_captcha_api_key
+AE_USERNAME = AE_CONFIG.username
+AE_PASSWORD = AE_CONFIG.password
+AE_PIN = AE_CONFIG.pin
 
 
 class UppiSpider(scrapy.Spider):
@@ -56,7 +60,7 @@ class UppiSpider(scrapy.Spider):
     allowed_domains = ["agenziaentrate.gov.it"]
 
     # Тут складатимемо клієнтів, для яких треба реально йти в SISTER
-    clients_to_fetch: List[Dict[str, Any]]
+    clients_to_fetch: List[ClientConfig]
 
     async def start(self):
         """
@@ -96,47 +100,59 @@ class UppiSpider(scrapy.Spider):
         self.clients_to_fetch = []
         self.logger.info("[START] Loaded %d clients from clients.yml", len(clients))
 
+        repo = DatabaseRepository(ae_username=AE_USERNAME, template_version="")
+        storage = StorageService()
+
         # Вирішуємо, кого потрібно качати з SISTER
-        for client in clients:
-            cf = client.get("LOCATORE_CF")
-            if not cf:
-                self.logger.error("[START] Client without LOCATORE_CF in clients.yml: %r", client)
-                continue
+        with DbConnectionManager() as conn:
+            for client in clients:
+                cf = client.locatore_cf
 
-            force_update = bool(client.get("FORCE_UPDATE_VISURA"))
+                try:
+                    db_state = repo.fetch_visura_metadata(conn, cf)
+                except Exception as e:
+                    self.logger.exception("[DB] Error checking visura presence for %s: %s", cf, e)
+                    db_state = None
 
-            try:
-                has_visura = db_has_visura(cf)
-            except Exception as e:
-                self.logger.exception("[DB] Error checking visura presence for %s: %s", cf, e)
-                # Якщо БД не відповіла — краще спробувати сходити в SISTER, ніж пропустити
-                has_visura = False
+                try:
+                    storage_exists = storage.object_exists(
+                        storage.config.visure_bucket,
+                        storage.visura_object_name(cf),
+                    ) if db_state else False
+                except Exception as e:
+                    self.logger.warning("[S3] Error checking visura object for %s: %s", cf, e)
+                    storage_exists = False
 
-            if has_visura and not force_update:
-                # Візура вже є в БД — SISTER не чіпаємо
-                self.logger.info(
-                    "[START] Skip SISTER for %s, visura already in DB and FORCE_UPDATE_VISURA is false",
-                    cf,
+                decision = should_download_visura(
+                    force_update=client.force_update_visura,
+                    ttl_days=VISURA_POLICY.ttl_days,
+                    db_state=db_state,
+                    storage_exists=storage_exists,
                 )
-                mapped = map_yaml_to_item(client)
-                mapped.setdefault("locatore_cf", cf)
-                mapped.setdefault("visura_source", "db_cache")
-                mapped.setdefault("visura_needs_refresh", False)
-                mapped.setdefault("visura_downloaded", False)
-                mapped.setdefault("visura_download_path", None)
-                mapped.setdefault("nav_to_visure_catastali", False)
-                mapped.setdefault("captcha_ok", False)
 
-                yield UppiItem(**mapped)
-            else:
-                # Потрібно сходити в SISTER
-                self.logger.info(
-                    "[START] Will fetch visura from SISTER for %s (force_update=%s, in_db=%s)",
-                    cf,
-                    force_update,
-                    has_visura,
-                )
-                self.clients_to_fetch.append(client)
+                if not decision.should_download:
+                    self.logger.info(
+                        "[START] Skip SISTER for %s, cache ok (%s)",
+                        cf,
+                        decision.reason,
+                    )
+                    mapped = asdict(client)
+                    mapped.setdefault("locatore_cf", cf)
+                    mapped.setdefault("visura_source", "db_cache")
+                    mapped.setdefault("visura_needs_refresh", False)
+                    mapped.setdefault("visura_downloaded", False)
+                    mapped.setdefault("visura_download_path", None)
+                    mapped.setdefault("nav_to_visure_catastali", False)
+                    mapped.setdefault("captcha_ok", False)
+
+                    yield UppiItem(**mapped)
+                else:
+                    self.logger.info(
+                        "[START] Will fetch visura from SISTER for %s (reason=%s)",
+                        cf,
+                        decision.reason,
+                    )
+                    self.clients_to_fetch.append(client)
 
         if not self.clients_to_fetch:
             self.logger.info("[START] No clients require SISTER fetch. Spider finished.")
@@ -222,10 +238,10 @@ class UppiSpider(scrapy.Spider):
         try:
             total = len(self.clients_to_fetch)
             for idx, client in enumerate(self.clients_to_fetch, start=1):
-                cf = client.get("LOCATORE_CF")
-                comune = client.get("COMUNE") or "PESCARA"
-                tipo_catasto = client.get("TIPO_CATASTO") or "F"
-                ufficio_label = client.get("UFFICIO_PROVINCIALE_LABEL") or "PESCARA Territorio"
+                cf = client.locatore_cf
+                comune = client.comune or "PESCARA"
+                tipo_catasto = client.tipo_catasto or "F"
+                ufficio_label = client.ufficio_label or "PESCARA Territorio"
 
                 self.logger.info(
                     "[CLIENT %d/%d] Processing CF=%s, comune=%s, tipo_catasto=%s, ufficio=%s",
@@ -237,7 +253,7 @@ class UppiSpider(scrapy.Spider):
                     ufficio_label,
                 )
 
-                mapped = map_yaml_to_item(client)
+                mapped = asdict(client)
                 mapped.setdefault("locatore_cf", cf)
                 mapped["visura_source"] = "sister"
                 mapped["visura_needs_refresh"] = False
