@@ -1,4 +1,4 @@
-# Uppi Scraper & Attestazione Pipeline
+# Uppi Scraper & Attestazione Pipeline!
 
 > Док для trainee data engineer, який має самостійно підняти проєкт, зрозуміти потік даних і не зламати БД 🙂
 
