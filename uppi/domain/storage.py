@@ -5,11 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 import logging
 
-
-try:
-    from .immobile import Immobile
-except ImportError:  # fallback, якщо хтось запустить як скрипт з іншої точки
-    from immobile import Immobile  # type: ignore
+from .immobile import Immobile
 
 logger = logging.getLogger(__name__)
 
