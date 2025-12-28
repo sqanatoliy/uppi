@@ -1657,7 +1657,7 @@ class UppiPipeline:
                 superficie = 0.0
 
         # 2) micro_zona та foglio
-        micro_zona = getattr(imm, "micro_zона", None)
+        micro_zona = getattr(imm, "micro_zona", None)
         if not micro_zona:
             micro_zona = _clean_str(adapter.get("micro_zona"))
 
@@ -1760,7 +1760,7 @@ class UppiPipeline:
         visura_downloaded = bool(adapter.get("visura_downloaded"))
         visura_download_path = adapter.get("visura_download_path")
         force_update = (
-            bool(adapter.get("force_update_visура"))
+            bool(adapter.get("force_update_visura"))
             or bool(adapter.get("FORCE_UPDATE_VISURA"))
             or bool(getattr(spider, "force_update_visura", False))
         )
