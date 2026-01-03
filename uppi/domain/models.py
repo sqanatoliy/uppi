@@ -21,6 +21,6 @@ class Contract:
     contract_kind: Optional[str] = None
     start_date: Optional[str] = None
     durata_anni: Optional[int] = None
-    arredato: Optional[bool] = None
+    arredato: Optional[str] = None
     energy_class: Optional[str] = None
     canone_contrattuale_mensile: Optional[float] = None
