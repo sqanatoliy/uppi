@@ -11,7 +11,7 @@ from psycopg2 import Error as Psycopg2Error
 
 from uppi.domain.immobile import Immobile
 from uppi.utils.db_utils.key_normalize import normalize_element_key
-from uppi.utils.parse_utils import clean_str, clean_sub, parse_date, safe_float, to_bool_or_none
+from uppi.utils.parse_utils import clean_str, clean_sub, parse_date, safe_float
 
 logger = logging.getLogger(__name__)
 
@@ -293,7 +293,7 @@ def db_update_contract_fields(conn, contract_id: str, adapter) -> None:
         except Exception:
             durata_anni = None
 
-    arredato = to_bool_or_none(adapter.get("arredato"))
+    arredato = safe_float(adapter.get("arredato"))
     energy_class = clean_str(adapter.get("energy_class"))
     if energy_class:
         energy_class = energy_class.upper()
@@ -410,6 +410,9 @@ def db_apply_contract_elements(conn, contract_id: str, adapter) -> None:
 
 
 def db_load_contract_context(conn, contract_id: str) -> Dict[str, Any]:
+    """
+    Loads the full contract context from the database.
+    """
     ctx: Dict[str, Any] = {
         "contract": {},
         "overrides": {},
