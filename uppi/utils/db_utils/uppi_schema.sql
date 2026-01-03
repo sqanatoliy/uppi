@@ -178,7 +178,7 @@ CREATE TABLE IF NOT EXISTS public.contracts (
   contract_kind               TEXT,
   start_date                  DATE,
   durata_anni                 INTEGER,
-  arredato                    BOOLEAN,
+  arredato                    DOUBLE PRECISION,
   energy_class                TEXT,
   canone_contrattuale_mensile NUMERIC,
 
