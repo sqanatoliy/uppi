@@ -189,6 +189,10 @@ class VisuraParser:
                     row_dict.update(self._parse_superficie(raw_value))
                     continue
 
+                if col_name == "rendita":
+                    row_dict.update(self._parse_rendita(raw_value))
+                    continue
+
                 row_dict[col_name] = raw_value
 
             rows.append(row_dict)
@@ -209,6 +213,13 @@ class VisuraParser:
             escluse = self._normalize_number(m2.group(1))
 
         return {"superficie_totale": totale, "superficie_escluse": escluse, "superficie_raw": txt}
+
+    def _parse_rendita(self, text: str) -> float | None:
+        text = text.replace("Euro", "").strip()
+
+        if not text:
+            return None
+        return {"rendita": f"€ {self._normalize_number(text)}"}
 
     def _normalize_number(self, numstr: str) -> float:
         return float(numstr.replace(",", ".").replace(" ", ""))
