@@ -3,39 +3,71 @@
 # LOCATORE_CF is mandatory and used both for the Sister visura query and for filling {{LOCATORE_CF}} in the template.
 # All other fields are optional; if omitted, the program will fall back to defaults or leave the corresponding field blank.
 
-- LOCATORE_CF: RSSMRA80A01H599X  # mandatory fiscal code of the landlord
+- LOCATORE_CF: FZZGNN37A13G141J  # mandatory fiscal code of the landlord
+  FORCE_UPDATE_VISURA: true  # optional: force update of the Sister visura even if a cached version exists
+
   # Override default search parameters (defaults: PESCARA, F, PESCARA Territorio)
-  UFFICIO_PROVINCIALE_LABEL: PESCARA Territorio
   COMUNE: PESCARA
   TIPO_CATASTO: F
+  UFFICIO_PROVINCIALE_LABEL: PESCARA Territorio
+
   # Landlord (locatore) address
-  LOCATORE_COMUNE_RES: Montesilvano Colli
-  LOCATORE_VIA: Santa Maria
-  LOCATORE_CIVICO: 55
+  LOCATORE_COMUNE_RES: Guliano Teatino
+  LOCATORE_VIA: San Cataldo
+  LOCATORE_CIVICO: 96
+
   # Property (immobile) details
-  IMMOBILE_COMUNE: Montesilvano
-  IMMOBILE_VIA: C-so Umberto II
-  IMMOBILE_CIVICO: 123
-  IMMOBILE_PIANO: 5
-  IMMOBILE_INTERNO: 66
-  FOGLIO: 7
-  NUMERO: 886
-  SUB: 101
-  RENDITA: 216,91
-  SUPERFICIE_TOTALE: 90
-  CATEGORIA: A/2
+  IMMOBILE_COMUNE: Pescara
+  IMMOBILE_VIA: Socrate
+  IMMOBILE_CIVICO: 5
+
+  # Property cadastral details
+  IMMOBILE_PIANO: 3
+  IMMOBILE_INTERNO: 4
+
+  # Cadastral data
+  # it is necessary to specify a minimum sufficient number of parameters
+  # that will allow identifying the object among all client objects
+  FOGLIO: 28
+  NUMERO: 2713
+  SUB: 150
+  RENDITA:
+  SUPERFICIE_TOTALE:
+  CATEGORIA:
+
   # Contract data
-  CONTRATTO_DATA: 15/10/2025
+  CONTRATTO_DATA: 12/09/2025
+
   # Tenant (conduttore) details
-  CONDUTTORE_NOME: Bianocchi Giovana
-  CONDUTTORE_CF: BCCGNN44M11G488W
-  CONDUTTORE_COMUNE: Roma
-  CONDUTTORE_VIA: Verdi, 99
+  CONDUTTORE_NOME: Sica Andrea
+  CONDUTTORE_CF: SCINDK73E03C632L
+  CONDUTTORE_COMUNE: Pescara
+  CONDUTTORE_VIA: Dante Alighieri
+
   # Registration data
-  DECORRENZA_DATA: 15/10/2025
-  REGISTRAZIONE_DATA: 16/10/2025
-  REGISTRAZIONE_NUM: 54321
-  AGENZIA_ENTRATE_SEDE: Chieti
+  DECORRENZA_DATA: 01/10/2025
+  REGISTRAZIONE_DATA: 15/10/2025
+  REGISTRAZIONE_NUM:  AB1234567890
+  AGENZIA_ENTRATE_SEDE: PESCARA
+
+  # Contract specifics Type of contract: CONCORDATO, TRANSITORIO, STUDENTI
+  CONTRACT_KIND: STUDENTI
+
+  # Furnished percentage (0.00 to 1.00) e.g., 10% = 0.10 or 6% = 0.06
+  ARREDATO: 0.15
+
+  # Energy class: A, B, E, F, G
+  ENERGY_CLASS: E
+
+  # Monthly rent  фактичний місячний canone
+  CANONE_CONTRATTUALE_MENSILE: 800.00
+
+  # Duration in years
+  DURATA_ANNI: 5   # тривалість договору
+
+  # ISTAT increase percentage. Required separete by . for decimals (e.g., 11.62) not by , commas
+  ISTAT: 3
+
   # Elements A and B (put "X" if present, leave empty otherwise)
   A1: X
   A2: X
@@ -43,29 +75,36 @@
   B2: X
   B3: X
   B4: X
-  B5: X
+  B5: 
+
   # Elements C
-  C1:
-  C2:
+  C1: X
+  C2: X
   C3: X
-  C4: X
+  C4: 
   C5: X
   C6: X
-  C7: X
+  C7: 
+
   # Elements D
   D1: X
-  D2:
-  D3:
-  D4: X
-  D5: X
-  D6:
-  D7:
-  D8: 
+  D2: X
+  D3: 
+  D4: 
+  D5: 
+  D6: 
+  D7: 
+  D8: X
   D9: 
-  D10:
-  D11:
-  D12:
-  D13:
+  D10: 
+  D11: 
+  D12: 
+  D13: 
 
-# - LOCATORE_CF: ABCDEF33G34H567I
-#   # Minimal example: only mandatory code; default values will be used for comune, tipo_catasto and ufficio_label
+  # # Опціонально: якщо у візурі microzona крива, а ти знаєш правильну
+  # MICROZONA_OVERRIDE:
+
+  # # Якщо площа/категорія у візурі неправильна, а в тебе є правильна
+  # SUPERFICIE_TOTALE_OVERRIDE:
+  # CATEGORIA_OVERRIDE:
+  # CLASSE_OVERRIDE:
