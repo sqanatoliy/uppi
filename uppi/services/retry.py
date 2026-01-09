@@ -1,3 +1,7 @@
+"""
+Не використовується в проєкті був замінений на повторні спроби від бібліотеки tenacity
+"""
+
 from __future__ import annotations
 
 import time
@@ -25,3 +29,4 @@ def retry(
                 logger.warning("[RETRY] %s attempt %d failed: %s", context, attempt, exc)
             time.sleep(delay)
             delay *= backoff
+    return None

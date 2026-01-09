@@ -1,8 +1,10 @@
 # uppi/utils/parse_utils.py
 from __future__ import annotations
+from decimal import Decimal
+from enum import Enum
 
 import re
-from datetime import date
+from datetime import date, datetime
 from typing import Any, Optional
 
 
@@ -75,3 +77,41 @@ def parse_date(v: Any) -> Optional[date]:
             return None
 
     return None
+
+
+# JSON encoder that converts Decimal and Enum to JSON-serializable formats
+def prepare_for_json(obj):
+    """Рекурсивно конвертує Decimal та Enum у формати, придатні для JSON."""
+    if isinstance(obj, dict):
+        return {k: prepare_for_json(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [prepare_for_json(i) for i in obj]
+    elif isinstance(obj, Decimal):
+        return float(obj)
+    elif isinstance(obj, Enum):
+        return obj.value
+    elif isinstance(obj, (date, datetime)):
+        return obj.isoformat()
+    return obj
+
+
+# Розділення повного імені на Прізвище та Ім'я
+def split_full_name(full_name: str) -> tuple[str, str]:
+    """
+    Розділяє повне ім'я на Прізвище та Ім'я.
+    Припускає формат: 'Прізвище Ім'я' або 'Прізвище Прізвище2 Ім'я'.
+    Повертає кортеж (surname, name).
+    """
+    if not full_name:
+        return "", ""
+    
+    parts = full_name.strip().split()
+    if len(parts) == 0:
+        return "", ""
+    if len(parts) == 1:
+        return parts[0], "" # Тільки прізвище
+        
+    # Найчастіше в документах першим йде Прізвище (Cognome), потім Ім'я (Nome)
+    # Ми беремо перше слово як прізвище, решту як ім'я. 
+    # Або навпаки, залежно від вашого стандарту.
+    return parts[0], " ".join(parts[1:])

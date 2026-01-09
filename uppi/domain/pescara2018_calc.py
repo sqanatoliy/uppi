@@ -355,6 +355,7 @@ def compute_base_canone(inp: CanoneInput) -> CanoneResult:
     d_cnt = max(0, inp.count_d)
     delta = max_eur_mq - min_eur_mq
 
+    # Базовий CANONE ANNUO AL METRO QUADRO €/mq без ISTAT
     if d_cnt == 0:
         base_euro_mq = min_eur_mq
     elif d_cnt >= 5:
@@ -364,7 +365,9 @@ def compute_base_canone(inp: CanoneInput) -> CanoneResult:
         base_euro_mq = min_eur_mq + delta * (d_cnt / 5.0)
 
 
+    # Коригування ISTAT
     istat_coeff = _normalize_istat_pct(inp.istat)
+    # Розрахунок CANONE ANNUO TOTALE IMMOBILE LOCATO з урахуванням ISTAT
     base_euro_mq_istat = base_euro_mq * (1.0 + istat_coeff)
 
     # 6) Канони
@@ -386,7 +389,7 @@ def compute_base_canone(inp: CanoneInput) -> CanoneResult:
         arredamento_delta_pct=0.0,
         energy_delta_pct=0.0,
         studenti_delta_pct=0.0,
-        canone_finale_mq=base_euro_mq,
+        canone_finale_mq=base_euro_mq_istat,
         canone_finale_annuo=canone_base_annuo,
         canone_finale_mensile=canone_base_mensile,
     )

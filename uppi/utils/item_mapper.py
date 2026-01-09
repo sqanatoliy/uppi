@@ -62,6 +62,7 @@ YAML_TO_ITEM_MAP: Dict[str, str] = {
     "CANONE_CONTRATTUALE_MENSILE": "canone_contrattuale_mensile",
     "DURATA_ANNI": "durata_anni",
     "ISTAT": "istat",
+    "IGNORE_SURCHARGES": "ignore_surcharges",
 
     # A/B/C/D — бізнес-логіка (pescara2018.py)
     "A1": "a1",

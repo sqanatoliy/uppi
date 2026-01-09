@@ -24,3 +24,7 @@ state.json
 /clients/clients.yml
 captcha_images/
 output/
+
+# Ignore Repomix files
+repomix.config.json
+repomix.md

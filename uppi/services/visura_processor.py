@@ -1,10 +1,10 @@
+# uppi/services/visura_processor.py
 from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import List, Optional, Tuple
 
-import psycopg2
 from itemadapter import ItemAdapter
 from decouple import config
 
@@ -15,42 +15,41 @@ from uppi.domain.storage import get_attestazione_path, get_client_dir, get_visur
 from uppi.parsers.visura_pdf_parser import VisuraParser
 from uppi.services.attestazione_generator import build_template_params
 from uppi.services.db_repo import (
-    db_apply_contract_elements,
-    db_create_contract,
-    db_get_latest_contract_id,
-    db_insert_attestazione_log,
-    db_insert_canone_calc,
-    db_load_contract_context,
-    db_load_immobili,
-    db_prune_old_immobili_without_contracts,
-    db_update_contract_fields,
-    db_upsert_contract_overrides,
-    db_upsert_contract_parties,
-    db_upsert_immobile,
+    db_upsert_address,
+    db_upsert_immobile_elements,
     db_upsert_person,
     db_upsert_visura,
-    immobile_db_row,
+    db_upsert_immobile,
+    db_update_immobile_real_address,
+    db_upsert_contract,
+    db_load_immobili,
+    db_load_contract_context,
+    db_insert_canone_calc,
+    db_insert_attestazione_log,
+    db_prune_old_immobili_without_contracts,
     immobile_from_parsed_dict,
+    immobile_db_row,
 )
 from uppi.services.storage_minio import StorageService
 from uppi.utils.audit import mask_username, safe_unlink, sha256_file, sha256_text
-from uppi.utils.parse_utils import clean_str, safe_float
+from uppi.utils.parse_utils import clean_str, prepare_for_json, safe_float, split_full_name
 
 from uppi.docs.attestazione_template_filler import fill_attestazione_template, underscored
-from uppi.domain.pescara2018_calc import compute_base_canone, CanoneCalculationError
+from uppi.domain.pescara2018_calc import compute_base_canone
 from uppi.domain.canone_models import CanoneInput, ContractKind
-
 
 logger = logging.getLogger(__name__)
 
+# Налаштування з середовища
 AE_USERNAME = config("AE_USERNAME", default="").strip()
-TEMPLATE_VERSION = config("TEMPLATE_VERSION", default="pescara2018_v1").strip()
-
-PRUNE_OLD_IMMOBILI_WITHOUT_CONTRACTS = config("PRUNE_OLD_IMMOBILI_WITHOUT_CONTRACTS", default="True").strip().lower() == "true"
+TEMPLATE_VERSION = config("TEMPLATE_VERSION", default="pescara2018_v2").strip()
+PRUNE_OLD_IMMOBILI_WITHOUT_CONTRACTS = config("PRUNE_OLD_IMMOBILI_WITHOUT_CONTRACTS",
+                                              default="True").strip().lower() == "true"
 DELETE_LOCAL_VISURA_AFTER_UPLOAD = config("DELETE_LOCAL_VISURA_AFTER_UPLOAD", default="False").strip().lower() == "true"
 
 
 def find_local_visura_pdf(cf: str, adapter: ItemAdapter) -> Optional[Path]:
+    """Пошук файлу візури в локальній файловій системі."""
     p = clean_str(adapter.get("visura_download_path"))
     if p:
         path = Path(p)
@@ -62,6 +61,7 @@ def find_local_visura_pdf(cf: str, adapter: ItemAdapter) -> Optional[Path]:
         return fallback
 
     client_dir = get_client_dir(cf)
+    # Шукаємо за префіксом DOC_ або просто найновіший PDF
     candidates = sorted(client_dir.glob("DOC_*.pdf"), key=lambda x: x.stat().st_mtime, reverse=True)
     if candidates:
         return candidates[0]
@@ -74,286 +74,345 @@ def find_local_visura_pdf(cf: str, adapter: ItemAdapter) -> Optional[Path]:
 
 
 def filter_immobiles_by_yaml(immobiles: List[Tuple[int, Immobile]], adapter: ItemAdapter) -> List[Tuple[int, Immobile]]:
+    """Фільтрація списку нерухомості з БД за параметрами, вказаними в YAML (item)."""
     foglio_f = clean_str(adapter.get("foglio"))
     numero_f = clean_str(adapter.get("numero"))
     sub_f = clean_str(adapter.get("sub"))
-    categoria_f = clean_str(adapter.get("categoria"))
-    rendita_f = clean_str(adapter.get("rendita"))
-    superficie_f = safe_float(adapter.get("superficie_totale"))
 
     out: List[Tuple[int, Immobile]] = []
     for imm_id, imm in immobiles:
+        # Порівнюємо кадастрові ідентифікатори (основний спосіб матчингу)
         if foglio_f and str(getattr(imm, "foglio", "") or "") != foglio_f:
             continue
         if numero_f and str(getattr(imm, "numero", "") or "") != numero_f:
             continue
         if sub_f and str(getattr(imm, "sub", "") or "") != sub_f:
             continue
-        if categoria_f and str(getattr(imm, "categoria", "") or "") != categoria_f:
-            continue
-        if rendita_f and str(getattr(imm, "rendita", "") or "") != rendita_f:
-            continue
-        if superficie_f is not None:
-            st = getattr(imm, "superficie_totale", None)
-            if st is not None:
-                try:
-                    if float(st) != float(superficie_f):
-                        continue
-                except Exception:
-                    pass
+
         out.append((imm_id, imm))
-        logger.info("[PIPELINE] Immobile ID=%s passed YAML filter", imm_id)
+        logger.debug("[PIPELINE] Immobile ID=%s matched YAML criteria", imm_id)
     return out
 
 
 class VisuraProcessor:
-    def __init__(
-        self,
-        storage: Optional[ObjectStorage] = None,
-        template_path: Optional[Path] = None,
-    ):
+    def __init__(self, storage: Optional[ObjectStorage] = None, template_path: Optional[Path] = None):
         self.storage_service = StorageService(storage)
         self.storage = storage or ObjectStorage()
         self.template_path = template_path or (
-            Path(__file__).resolve().parents[2]
-            / "attestazione_template"
-            / "template_attestazione_pescara.docx"
+                Path(__file__).resolve().parents[2] / "attestazione_template" / "template_attestazione_pescara.docx"
         )
 
     def process_item(self, item, spider):
         adapter = ItemAdapter(item)
-
         locatore_cf = clean_str(adapter.get("locatore_cf") or adapter.get("codice_fiscale"))
+
         if not locatore_cf:
-            spider.logger.error("[PIPELINE] Item без locatore_cf/codice_fiscale: %r", item)
+            spider.logger.error("[PIPELINE] Missing locatore_cf for item: %r", item)
             return item
 
         cond_cf = clean_str(adapter.get("conduttore_cf"))
-
-        visura_source = clean_str(adapter.get("visura_source")) or "unknown"
-        visura_downloaded = bool(adapter.get("visura_downloaded"))
-
-        spider.logger.info(
-            "[PIPELINE] CF=%s source=%s downloaded=%s",
-            locatore_cf,
-            visura_source,
-            visura_downloaded,
-        )
-
         conn = get_pg_connection()
+
         try:
+            # --- ЕТАП 1: АДРЕСИ ТА ПЕРСОНИ (LOCATORE / CONDUTTORE) ---
+
+            # 1.1. Адреса Locatore
+            loc_addr_id = None
+            if adapter.get("locatore_comune_res") and adapter.get("locatore_via"):
+                loc_addr_id = db_upsert_address(conn, {
+                    "comune": adapter.get("locatore_comune_res"),
+                    "via_full": adapter.get("locatore_via"),
+                    "civico": adapter.get("locatore_civico")
+                })
+
             db_upsert_person(
-                conn,
-                locatore_cf,
+                conn, locatore_cf,
                 surname=clean_str(adapter.get("locatore_surname")),
                 name=clean_str(adapter.get("locatore_name")),
+                address_id=loc_addr_id
             )
+
+            # 1.2. Адреса Conduttore
             if cond_cf:
+                cond_addr_id = None
+                if adapter.get("conduttore_comune"):
+                    cond_addr_id = db_upsert_address(conn, {
+                        "comune": adapter.get("conduttore_comune"),
+                        "via_full": adapter.get("conduttore_via") or ""
+                    })
+
+                # Розділення повного імені Conduttore (якщо потрібно)
+                cond_full_name = clean_str(adapter.get("conduttore_nome"))
+                c_surname, c_name = split_full_name(cond_full_name)
+
                 db_upsert_person(
-                    conn,
-                    cond_cf,
-                    surname=clean_str(adapter.get("conduttore_surname")),
-                    name=clean_str(adapter.get("conduttore_name")),
+                    conn, cond_cf,
+                    surname=c_surname,
+                    name=c_name,
+                    address_id=cond_addr_id
                 )
 
+            # --- ЕТАП 2: ЗАВАНТАЖЕННЯ ТА ПАРСИНГ ВІЗУРИ ---
+
+            visura_source = clean_str(adapter.get("visura_source"))
+            visura_downloaded = bool(adapter.get("visura_downloaded"))
             pdf_path = None
             fetched_now = False
-            checksum = None
+            visura_db_id = None
             pdf_to_delete: Path | None = None
 
             if visura_source == "sister" and visura_downloaded:
                 pdf_path = find_local_visura_pdf(locatore_cf, adapter)
+                if pdf_path:
+                    checksum = sha256_file(pdf_path)
+                    bucket = self.storage.cfg.visure_bucket
+                    obj_name = self.storage.visura_object_name(locatore_cf)
 
-                if pdf_path is None:
-                    raise FileNotFoundError(f"Visura PDF not found for CF={locatore_cf} (downloaded=True)")
-
-                checksum = sha256_file(pdf_path)
-
-                bucket = self.storage.cfg.visure_bucket
-                obj_name = self.storage.visura_object_name(locatore_cf)
-                self.storage_service.upload_file(bucket, obj_name, pdf_path, content_type="application/pdf")
-                fetched_now = True
-
-                db_upsert_visura(conn, locatore_cf, bucket, obj_name, checksum, fetched_now=True)
-
-                pdf_to_delete = pdf_path
-
+                    self.storage_service.upload_file(bucket, obj_name, pdf_path, content_type="application/pdf")
+                    fetched_now = True
+                    visura_db_id = db_upsert_visura(conn, locatore_cf, bucket, obj_name, checksum, fetched_now=True)
+                    pdf_to_delete = pdf_path
             else:
-                bucket = self.storage.cfg.visure_bucket
-                obj_name = self.storage.visura_object_name(locatore_cf)
-                db_upsert_visura(conn, locatore_cf, bucket, obj_name, checksum_sha256=None, fetched_now=False)
+                # Навіть якщо не качали зараз, реєструємо запис або отримуємо існуючий ID
+                visura_db_id = db_upsert_visura(
+                    conn, locatore_cf, self.storage.cfg.visure_bucket,
+                    self.storage.visura_object_name(locatore_cf), None, fetched_now=False
+                )
 
-                maybe_local = find_local_visura_pdf(locatore_cf, adapter)
-                if maybe_local is not None:
-                    pdf_to_delete = maybe_local
+            # --- ЕТАП 3: ОБРОБКА IMMOBILI (З ПАРСЕРА) ---
 
             keep_ids: List[int] = []
-            if fetched_now and pdf_path is not None:
+            if fetched_now and pdf_path:
                 parser = VisuraParser()
                 parsed_dicts = parser.parse(pdf_path)
 
-                if not parsed_dicts:
-                    spider.logger.warning("[PIPELINE] No immobili parsed from PDF CF=%s", locatore_cf)
-                else:
-                    loc_surname = clean_str(parsed_dicts[0].get("locatore_surname"))
-                    loc_name = clean_str(parsed_dicts[0].get("locatore_name"))
-                    if loc_surname or loc_name:
-                        db_upsert_person(conn, locatore_cf, surname=loc_surname, name=loc_name)
+                # Оновлюємо інформацію про Locatore з візури
+                if parsed_dicts:
+                    # Prendiamo i dati del locatore dal primo immobile trovato (sono uguali per tutti)
+                    first_item = parsed_dicts[0]
+                    v_name = first_item.get("locatore_name")
+                    v_surname = first_item.get("locatore_surname")
 
-                    for d in parsed_dicts:
-                        logger.info(
-                            "[PIPELINE] PARSED immobile: foglio=%r numero=%r sub=%r categoria=%r sup=%r indirizzo=%r",
-                            d.get("foglio"),
-                            d.get("numero"),
-                            d.get("sub"),
-                            d.get("categoria"),
-                            d.get("superficie_totale"),
-                            d.get("via_name") or d.get("indirizzo_raw"),
-                        )
-                        imm = immobile_from_parsed_dict(d)
-
-                        imm_id = db_upsert_immobile(conn, locatore_cf, imm)
-                        keep_ids.append(imm_id)
-
-                    deleted = db_prune_old_immobili_without_contracts(
-                        conn,
-                        locatore_cf,
-                        keep_ids,
-                        enabled=PRUNE_OLD_IMMOBILI_WITHOUT_CONTRACTS,
+                    # Aggiorniamo il database con i nomi VERI estratti dalla visura
+                    # solo se non sono già stati forniti manualmente via YAML
+                    db_upsert_person(
+                        conn, locatore_cf,
+                        surname=clean_str(adapter.get("locatore_surname")) or v_surname,
+                        name=clean_str(adapter.get("locatore_name")) or v_name,
+                        address_id=loc_addr_id
                     )
-                    if deleted:
-                        spider.logger.info("[DB] Pruned %d old immobili (no contracts) CF=%s", deleted, locatore_cf)
+
+                for d in parsed_dicts:
+                    # А. Зберігаємо адресу з візури
+                    v_addr_id = db_upsert_address(conn, {
+                        "comune": d.get("immobile_comune"),
+                        "via_full": d.get("via_name") or d.get("indirizzo_raw"),
+                        "civico": d.get("via_num"),
+                        "piano": d.get("piano"),
+                        "interno": d.get("interno"),
+                        "scala": d.get("scala")
+                    })
+
+                    # Б. Створюємо/оновлюємо Immobile Master Data
+                    imm_obj = immobile_from_parsed_dict(d)
+                    imm_id = db_upsert_immobile(
+                        conn, locatore_cf, imm_obj,
+                        visura_addr_id=v_addr_id,
+                        source_visura_id=visura_db_id
+                    )
+                    keep_ids.append(imm_id)
+
+                # Очистка старих записів без контрактів
+                if keep_ids:
+                    db_prune_old_immobili_without_contracts(conn, locatore_cf, keep_ids,
+                                                            PRUNE_OLD_IMMOBILI_WITHOUT_CONTRACTS)
+
+            # --- ЕТАП 4: ОПЕРАЦІЙНИЙ ЦИКЛ (КОНТРАКТИ ТА ГЕНЕРАЦІЯ) ---
 
             immobili_db = db_load_immobili(conn, locatore_cf)
-            if not immobili_db:
-                spider.logger.error("[PIPELINE] No immobili in DB for CF=%s", locatore_cf)
-                conn.commit()
-                return item
-
             selected = filter_immobiles_by_yaml(immobili_db, adapter)
-            if not selected:
-                spider.logger.warning("[PIPELINE] No immobili matched YAML filter CF=%s", locatore_cf)
-                conn.commit()
-                return item
 
             for immobile_id, imm in selected:
-                force_new_contract = bool(adapter.get("force_new_contract") or False)
-                contract_id = None if force_new_contract else db_get_latest_contract_id(conn, immobile_id)
-                if not contract_id:
-                    contract_id = db_create_contract(conn, immobile_id)
+                # 4.1.1 Обробка "реальної" адреси об'єкта (якщо вказана в YAML як override)
+                real_addr_id = None
+                if adapter.get("immobile_comune") or adapter.get("immobile_via"):
+                    real_addr_id = db_upsert_address(conn, {
+                        "comune": adapter.get("immobile_comune"),
+                        "via_full": adapter.get("immobile_via"),
+                        "civico": adapter.get("immobile_civico"),
+                        "piano": adapter.get("immobile_piano"),
+                        "interno": adapter.get("immobile_interno")
+                    })
 
-                db_update_contract_fields(conn, contract_id, adapter)
-                db_upsert_contract_parties(conn, contract_id, locatore_cf, cond_cf)
-                db_upsert_contract_overrides(conn, contract_id, adapter)
-                db_apply_contract_elements(conn, contract_id, adapter)
+                # Оновлюємо Master Data нерухомості даними з YAML
+                db_update_immobile_real_address(
+                    conn, immobile_id,
+                    real_address_id=real_addr_id,
+                    energy_class=adapter.get("energy_class")
+                )
 
+                # 4.1.2 Записуємо елементи A-D в базу перед завантаженням контексту
+                db_upsert_immobile_elements(conn, immobile_id, adapter)
+
+                # 4.2. Контракт
+                # Створюємо або оновлюємо останній активний контракт
+                contract_id = db_upsert_contract(conn, immobile_id, adapter)
+
+                # Отримуємо повний контекст (включаючи джойни адрес та персон)
                 contract_ctx = db_load_contract_context(conn, contract_id)
+                # imm = contract_ctx['immobili']  # Оновлений Immobile з контексту
 
-                canone_snapshot: Dict[str, Any] = {}
-                canone_result_snapshot: Optional[Dict[str, Any]] = None
+                # --- ЕТАП 5: РОЗРАХУНОК КАНОНУ ---
 
-                if compute_base_canone is not None and CanoneInput is not None and ContractKind is not None:
+                canone_snapshot = {}
+                canone_result_snapshot = None
+
+                try:
+                    elements = contract_ctx.get("elements") or {}
+
+                    # Допоміжна функція для підрахунку заповнених елементів A-D
+                    def cnt(keys: List[str]) -> int:
+                        return sum(1 for k in keys if str(elements.get(k, "") or "").strip() != "")
+
+                    # -------------------------------------------------------------------------
+                    # 1. CONTRACT_KIND
+                    # Логіка: Завжди беремо з YAML або "CONCORDATO". Ніколи з БД.
+                    # -------------------------------------------------------------------------
+                    kind_raw = clean_str(adapter.get("contract_kind"))
+                    kind_str = (kind_raw or "CONCORDATO").upper()
+
+                    kind_enum = ContractKind.CONCORDATO
                     try:
-                        elements = contract_ctx.get("elements") or {}
+                        kind_enum = ContractKind[kind_str]
+                    except KeyError:
+                        logger.warning(f"[CANONE] Unknown contract kind '{kind_str}', defaulting to CONCORDATO")
+                        kind_enum = ContractKind.CONCORDATO
 
-                        def cnt(keys: List[str]) -> int:
-                            return sum(1 for k in keys if str(elements.get(k, "") or "").strip() != "")
+                    # -------------------------------------------------------------------------
+                    # 2. ENERGY_CLASS (Smart Patch)
+                    # Логіка: 
+                    #   - YAML == "-" -> None (видалено)
+                    #   - YAML == "A" -> "A" (оновлено)
+                    #   - YAML == None -> беремо з БД (contract_ctx['immobile']['energy_class'])
+                    # -------------------------------------------------------------------------
+                    yaml_energy = clean_str(adapter.get("energy_class"))
+                    db_energy = contract_ctx.get("immobile", {}).get(
+                        "energy_class")  # Тепер це поле доступне завдяки фіксу в db_repo
 
-                        raw_kind = clean_str(adapter.get("contract_kind")) or "CONCORDATO"
-                        raw_kind = raw_kind.upper()
-                        try:
-                            kind_enum = ContractKind[raw_kind]
-                        except Exception:
-                            kind_enum = ContractKind.CONCORDATO
+                    if yaml_energy == "-":
+                        final_energy = None
+                    elif yaml_energy:
+                        final_energy = yaml_energy.upper()
+                    else:
+                        final_energy = db_energy
 
-                        sup = getattr(imm, "superficie_totale", None)
-                        if sup is None:
-                            sup = safe_float(adapter.get("superficie_totale"))
+                        # -------------------------------------------------------------------------
+                    # 3. ISTAT (Smart Patch)
+                    # -------------------------------------------------------------------------
+                    yaml_istat = adapter.get("istat")
+                    db_istat = contract_ctx.get("contract", {}).get("istat_rate")
 
-                        can_in = CanoneInput(
-                            superficie_catastale=float(sup or 0.0),
-                            micro_zona=clean_str(getattr(imm, "micro_zona", None)),
-                            foglio=clean_str(getattr(imm, "foglio", None)),
-                            categoria_catasto=clean_str(getattr(imm, "categoria", None)),
-                            classe_catasto=clean_str(getattr(imm, "classe", None)),
-                            count_a=cnt(["a1", "a2"]),
-                            count_b=cnt([f"b{i}" for i in range(1, 6)]),
-                            count_c=cnt([f"c{i}" for i in range(1, 8)]),
-                            count_d=cnt([f"d{i}" for i in range(1, 14)]),
-                            arredato=float(adapter.get("arredato") if adapter.get("arredato") is not None else None),
-                            energy_class=clean_str(adapter.get("energy_class")),
-                            contract_kind=kind_enum,
-                            durata_anni=int(adapter.get("durata_anni") or 3),
-                            istat=float(adapter.get("istat") if float(adapter.get("istat")) is not None else None),
-                        )
+                    final_istat = None
+                    if str(yaml_istat).strip() == "-":
+                        final_istat = None
+                    elif yaml_istat is not None and str(yaml_istat).strip() != "":
+                        final_istat = safe_float(yaml_istat)
+                    elif db_istat is not None:
+                        final_istat = float(db_istat)
 
-                        canone_snapshot = {
-                            "superficie_catastale": can_in.superficie_catastale,
-                            "micro_zona": can_in.micro_zona,
-                            "foglio": can_in.foglio,
-                            "categoria_catasto": can_in.categoria_catasto,
-                            "classe_catasto": can_in.classe_catasto,
-                            "count_a": can_in.count_a,
-                            "count_b": can_in.count_b,
-                            "count_c": can_in.count_c,
-                            "count_d": can_in.count_d,
-                            "arredato": can_in.arredato,
-                            "energy_class": can_in.energy_class,
-                            "contract_kind": str(can_in.contract_kind),
-                            "durata_anni": can_in.durata_anni,
-                            "istat": can_in.istat,
-                        }
+                    # -------------------------------------------------------------------------
+                    # 4. DURATA (Smart Patch)
+                    # -------------------------------------------------------------------------
+                    yaml_durata = adapter.get("durata_anni")
+                    db_durata = contract_ctx.get("contract", {}).get("durata_anni")
 
-                        can_res = compute_base_canone(can_in)
-                        canone_result_snapshot = {
-                            "zona": getattr(can_res, "zona", None),
-                            "subfascia": getattr(can_res, "subfascia", None),
-                            "base_min_euro_mq": getattr(can_res, "base_min_euro_mq", None),
-                            "base_max_euro_mq": getattr(can_res, "base_max_euro_mq", None),
-                            "base_euro_mq": getattr(can_res, "base_euro_mq", None),
-                            "base_euro_mq_istat": getattr(can_res, "base_euro_mq_istat", None),
-                            "canone_base_annuo": getattr(can_res, "canone_base_annuo", None),
-                            "canone_finale_annuo": getattr(can_res, "canone_finale_annuo", None),
-                            "canone_finale_mensile": getattr(can_res, "canone_finale_mensile", None),
-                        }
+                    final_durata = 3  # Default 3
+                    if str(yaml_durata).strip() == "-":
+                        final_durata = 3  # Якщо видалили, повертаємось до дефолту
+                    elif yaml_durata is not None and str(yaml_durata).strip() != "":
+                        final_durata = int(yaml_durata)
+                    elif db_durata is not None:
+                        final_durata = int(db_durata)
 
-                        result_m = None
-                        try:
-                            result_m = float(getattr(can_res, "canone_finale_mensile", None))
-                        except Exception:
-                            result_m = None
+                    # -------------------------------------------------------------------------
+                    # 5. ARREDATO (Smart Patch)
+                    # -------------------------------------------------------------------------
+                    yaml_arredato = adapter.get("arredato")
+                    db_arredato = contract_ctx.get("contract", {}).get("arredato_pct")
 
-                        db_insert_canone_calc(
-                            conn,
-                            contract_id=contract_id,
-                            method="pescara2018_base",
-                            inputs={"canone_input": canone_snapshot, "result": canone_result_snapshot},
-                            result_mensile=result_m,
-                        )
+                    final_arredato = 0.0
+                    if str(yaml_arredato).strip() == "-":
+                        final_arredato = 0.0
+                    elif yaml_arredato is not None and str(yaml_arredato).strip() != "":
+                        final_arredato = safe_float(yaml_arredato) or 0.0
+                    elif db_arredato is not None:
+                        final_arredato = float(db_arredato)
 
-                        contract_ctx = db_load_contract_context(conn, contract_id)
+                    # -------------------------------------------------------------------------
+                    # 6. IGNORE_SURCHARGES
+                    # -------------------------------------------------------------------------
+                    yaml_ignore = adapter.get("ignore_surcharges")
+                    db_ignore = contract_ctx.get("contract", {}).get("ignore_surcharges")
 
-                    except CanoneCalculationError as e:
-                        spider.logger.warning(
-                            "[CANONE] Logical error contract=%s immobile_id=%s: %s",
-                            contract_id,
-                            immobile_id,
-                            e,
-                        )
-                    except Exception as e:
-                        spider.logger.exception(
-                            "[CANONE] Unexpected error contract=%s immobile_id=%s: %s",
-                            contract_id,
-                            immobile_id,
-                            e,
-                        )
+                    final_ignore = False
+                    if str(yaml_ignore).strip() == "-":
+                        final_ignore = False
+                    elif yaml_ignore is not None and str(yaml_ignore).strip() != "":
+                        final_ignore = str(yaml_ignore).lower() in ("true", "1", "yes", "y")
+                    elif db_ignore is not None:
+                        final_ignore = bool(db_ignore)
+
+                    # --- Створення об'єкта вхідних даних ---
+                    can_in = CanoneInput(
+                        superficie_catastale=float(imm.superficie_totale or adapter.get("superficie_totale") or 0),
+                        micro_zona=clean_str(imm.micro_zona),
+                        foglio=clean_str(imm.foglio),
+                        categoria_catasto=clean_str(imm.categoria),
+                        classe_catasto=clean_str(imm.classe),
+                        count_a=cnt(["a1", "a2"]),
+                        count_b=cnt([f"b{i}" for i in range(1, 6)]),
+                        count_c=cnt([f"c{i}" for i in range(1, 8)]),
+                        count_d=cnt([f"d{i}" for i in range(1, 14)]),
+
+                        arredato=final_arredato,
+                        energy_class=final_energy,
+                        contract_kind=kind_enum,
+                        durata_anni=final_durata,
+                        istat=final_istat,
+                        ignore_surcharges=final_ignore,
+                    )
+
+                    # Логування для відлагодження
+                    logger.debug(
+                        f"[CALC_INPUT] K={kind_str} En={final_energy} Arr={final_arredato} Dur={final_durata} Ign={final_ignore}")
+
+                    can_res = compute_base_canone(can_in)
+
+                    # Очищення даних для збереження в JSON
+                    canone_snapshot = prepare_for_json(can_in.__dict__)
+                    canone_result_snapshot = prepare_for_json(can_res.__dict__) if can_res else {}
+
+                    # Збереження результатів розрахунку в БД
+                    db_insert_canone_calc(
+                        conn, contract_id, "pescara2018_base",
+                        inputs={"canone_input": canone_snapshot, "result": canone_result_snapshot},
+                        result_mensile=safe_float(getattr(can_res, "canone_finale_mensile", None))
+                    )
+
+                    # Перезавантажуємо контекст після розрахунку для генератора
+                    contract_ctx = db_load_contract_context(conn, contract_id)
+
+                except Exception as e:
+                    spider.logger.warning("[CANONE] Calculation skipped or failed for contract %s: %s", contract_id, e)
+
+                # --- ЕТАП 6: ГЕНЕРАЦІЯ ТА UPLOAD ДОКУМЕНТА ---
 
                 params = build_template_params(adapter, imm, contract_ctx)
-
                 output_path = get_attestazione_path(locatore_cf, contract_id, imm)
                 output_path.parent.mkdir(parents=True, exist_ok=True)
 
                 try:
+                    logger.debug(f"[DEBUG_ADDR] Contract CTX: {contract_ctx.get('immobile')}")
                     fill_attestazione_template(
                         template_path=str(self.template_path),
                         output_folder=str(output_path.parent),
@@ -361,104 +420,66 @@ class VisuraProcessor:
                         params=params,
                         underscored=underscored,
                     )
-                except Exception as e:
-                    spider.logger.exception("[PIPELINE] DOCX generation failed contract=%s: %s", contract_id, e)
-                    db_insert_attestazione_log(
-                        conn,
-                        contract_id=contract_id,
-                        status="failed",
-                        output_bucket=self.storage.cfg.attestazioni_bucket,
-                        output_object=self.storage.attestazione_object_name(locatore_cf, contract_id),
-                        params_snapshot={
-                            "locatore_cf": locatore_cf,
-                            "contract_id": contract_id,
-                            "error_stage": "docx_generation",
-                        },
-                        error=str(e)[:5000],
-                        author_login_masked=mask_username(AE_USERNAME),
-                        author_login_sha256=sha256_text(AE_USERNAME),
-                        template_version=TEMPLATE_VERSION,
-                    )
-                    continue
 
-                try:
                     out_bucket = self.storage.cfg.attestazioni_bucket
                     out_obj = self.storage.attestazione_object_name(locatore_cf, contract_id)
+
                     self.storage_service.upload_file(
-                        out_bucket,
-                        out_obj,
-                        output_path,
-                        content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                        out_bucket, out_obj, output_path,
+                        content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                     )
+
+                    # Створюємо детальний знімок даних для аудиту
+                    # Тут ми використовуємо immobile_db_row, щоб отримати очищені дані
+                    imm_data_snapshot = immobile_db_row(imm)
 
                     params_snapshot = {
                         "locatore_cf": locatore_cf,
                         "immobile_id": immobile_id,
                         "contract_id": contract_id,
                         "yaml_item": dict(adapter.asdict()),
-                        "immobile_parsed": immobile_db_row(imm),
+                        "immobile_master_data": imm_data_snapshot,  # ВИКОРИСТАННЯ ТУТ
                         "contract_ctx": contract_ctx,
                         "template_version": TEMPLATE_VERSION,
-                        "author_login_masked": mask_username(AE_USERNAME),
-                        "canone_input": canone_snapshot,
                         "canone_result": canone_result_snapshot,
                         "output": {"bucket": out_bucket, "object": out_obj},
                     }
 
+                    clean_params = prepare_for_json(params_snapshot)
+                    # Лог успішної генерації
                     db_insert_attestazione_log(
-                        conn,
-                        contract_id=contract_id,
-                        status="generated",
-                        output_bucket=out_bucket,
-                        output_object=out_obj,
-                        params_snapshot=params_snapshot,
+                        conn, contract_id, "generated", out_bucket, out_obj,
+                        params_snapshot=clean_params,
                         error=None,
                         author_login_masked=mask_username(AE_USERNAME),
                         author_login_sha256=sha256_text(AE_USERNAME),
-                        template_version=TEMPLATE_VERSION,
+                        template_version=TEMPLATE_VERSION
                     )
 
-                    spider.logger.info("[PIPELINE] Attestazione OK contract=%s -> %s/%s", contract_id, out_bucket, out_obj)
-
                 except Exception as e:
-                    spider.logger.exception("[PIPELINE] Upload/log attestazione failed contract=%s: %s", contract_id, e)
+                    spider.logger.exception("[DOCX] Failed for contract %s", contract_id)
                     db_insert_attestazione_log(
-                        conn,
-                        contract_id=contract_id,
-                        status="failed",
-                        output_bucket=self.storage.cfg.attestazioni_bucket,
-                        output_object=self.storage.attestazione_object_name(locatore_cf, contract_id),
-                        params_snapshot={
-                            "locatore_cf": locatore_cf,
-                            "contract_id": contract_id,
-                            "error_stage": "upload_or_log",
-                        },
-                        error=str(e)[:5000],
+                        conn, contract_id, "failed", "", "",
+                        {"error_stage": "generation_or_upload"},
+                        error=str(e),
                         author_login_masked=mask_username(AE_USERNAME),
                         author_login_sha256=sha256_text(AE_USERNAME),
-                        template_version=TEMPLATE_VERSION,
+                        template_version=TEMPLATE_VERSION
                     )
 
             conn.commit()
-            if DELETE_LOCAL_VISURA_AFTER_UPLOAD and pdf_to_delete is not None:
-                safe_unlink(pdf_to_delete)
-            return item
 
-        except psycopg2.Error as e:
-            spider.logger.exception("[PIPELINE] DB error CF=%s: %s", locatore_cf, e)
-            try:
-                conn.rollback()
-            except Exception:
-                pass
+            # Очистка тимчасових файлів
+            if DELETE_LOCAL_VISURA_AFTER_UPLOAD and pdf_to_delete:
+                safe_unlink(pdf_to_delete)
+
             return item
 
         except Exception as e:
-            spider.logger.exception("[PIPELINE] Fatal error CF=%s: %s", locatore_cf, e)
-            try:
+            spider.logger.exception("[PIPELINE] Fatal error processing CF %s: %s", locatore_cf, e)
+            if conn:
                 conn.rollback()
-            except Exception:
-                pass
             return item
-
         finally:
-            conn.close()
+            if conn:
+                conn.close()

@@ -5,6 +5,9 @@ import logging
 
 import psycopg2
 from decouple import config
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type, before_sleep_log
+from psycopg2 import OperationalError, InterfaceError
+
 
 logger = logging.getLogger(__name__)
 
@@ -16,13 +19,23 @@ DB_PASSWORD = config("DB_PASSWORD", default="uppi_password")
 DB_SSL_MODE = config("DB_SSL_MODE", default="prefer")
 
 
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=1, max=20),
+    retry=retry_if_exception_type((OperationalError, InterfaceError)),
+    before_sleep=before_sleep_log(logger, logging.WARNING),
+    reraise=True,
+)
 def get_pg_connection():
     """
     Отримати новий конекшн до PostgreSQL (psycopg2).
 
     Важливо:
     - autocommit = False (транзакції керуються явно)
-    - виключення не ковтаємо: нехай падає, бо це критична інфраструктура
+    - при виключеннях нехай падає, бо це критична інфраструктура
+    Retry:
+    - тільки transient network / channel errors
+    - тільки на connect()
     """
     try:
         conn = psycopg2.connect(

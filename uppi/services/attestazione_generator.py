@@ -18,29 +18,36 @@ ELEMENT_KEYS = (
 def build_template_params(adapter, imm: Immobile, contract_ctx: Dict[str, Any]) -> Dict[str, str]:
     params: Dict[str, str] = {}
 
+    # Розпаковуємо контекст
     overrides = contract_ctx.get("overrides") or {}
     elements = contract_ctx.get("elements") or {}
     contract = contract_ctx.get("contract") or {}
     parties = contract_ctx.get("parties") or {}
-
+    
+    # 1. ДАНІ ОРЕНДОДАВЦЯ (LOCATORE)
     loc = parties.get("LOCATORE") or {}
-
-    loc_cf = clean_str(loc.get("cf") or adapter.get("locatore_cf") or adapter.get("codice_fiscale") or "")
-    loc_name = loc.get("name")
-    loc_surname = loc.get("surname")
-
+    loc_addr = loc.get("address") or {} # Нова вкладена структура адреси
+    
+    loc_cf = clean_str(loc.get("cf") or adapter.get("locatore_cf") or "")
     params["{{LOCATORE_CF}}"] = loc_cf
-    params["{{LOCATORE_NOME}}"] = format_person_fullname(loc_name, loc_surname)
-    params["{{LOCATORE_COMUNE_RES}}"] = str(overrides.get("locatore_comune_res") or adapter.get("locatore_comune_res") or "")
-    params["{{LOCATORE_VIA}}"] = str(overrides.get("locatore_via") or adapter.get("locatore_via") or "")
-    params["{{LOCATORE_CIVICO}}"] = str(overrides.get("locatore_civico") or adapter.get("locatore_civico") or "")
+    params["{{LOCATORE_NOME}}"] = format_person_fullname(loc.get("name"), loc.get("surname"))
+    
+    # Пріоритет: Override -> Дані з БД (адреса особи) -> Adapter
+    params["{{LOCATORE_COMUNE_RES}}"] = str(overrides.get("locatore_comune_res") or loc_addr.get("comune") or adapter.get("locatore_comune_res") or "")
+    params["{{LOCATORE_VIA}}"] = str(overrides.get("locatore_via") or loc_addr.get("via_full") or adapter.get("locatore_via") or "")
+    params["{{LOCATORE_CIVICO}}"] = str(overrides.get("locatore_civico") or loc_addr.get("civico") or adapter.get("locatore_civico") or "")
 
-    params["{{IMMOBILE_COMUNE}}"] = str(overrides.get("immobile_comune_override") or "")
-    params["{{IMMOBILE_VIA}}"] = str(overrides.get("immobile_via_override") or "")
-    params["{{IMMOBILE_CIVICO}}"] = str(overrides.get("immobile_civico_override") or "")
-    params["{{IMMOBILE_PIANO}}"] = str(overrides.get("immobile_piano_override") or "")
-    params["{{IMMOBILE_INTERNO}}"] = str(overrides.get("immobile_interno_override") or "")
+    # 2. ДАНІ ОБ'ЄКТА НЕРУХОМОСТІ (IMMOBILE)
+    # Використовуємо реальну адресу об'єкта з БД (immobile_address)
+    imm_addr = contract_ctx.get("immobile") or {}
+    
+    params["{{IMMOBILE_COMUNE}}"] = str(overrides.get("immobile_comune_override") or imm_addr.get("comune") or "")
+    params["{{IMMOBILE_VIA}}"] = str(overrides.get("immobile_via_override") or imm_addr.get("via") or "")
+    params["{{IMMOBILE_CIVICO}}"] = str(overrides.get("immobile_civico_override") or imm_addr.get("civico") or "")
+    params["{{IMMOBILE_PIANO}}"] = str(overrides.get("immobile_piano_override") or imm_addr.get("piano") or "")
+    params["{{IMMOBILE_INTERNO}}"] = str(overrides.get("immobile_interno_override") or imm_addr.get("interno") or "")
 
+    # Кадастрові дані (з об'єкта Immobile)
     params["{{FOGLIO}}"] = str(getattr(imm, "foglio", "") or "")
     params["{{NUMERO}}"] = str(getattr(imm, "numero", "") or "")
     params["{{SUB}}"] = str(getattr(imm, "sub", "") or "")
@@ -48,37 +55,76 @@ def build_template_params(adapter, imm: Immobile, contract_ctx: Dict[str, Any]) 
     params["{{SUPERFICIE_TOTALE}}"] = str(getattr(imm, "superficie_totale", "") or "")
     params["{{CATEGORIA}}"] = str(getattr(imm, "categoria", "") or "")
 
+    # APPARTAMENTO 
     params["{{APP_FOGL}}"] = params["{{FOGLIO}}"]
     params["{{APP_PART}}"] = params["{{NUMERO}}"]
     params["{{APP_SUB}}"] = params["{{SUB}}"]
     params["{{APP_REND}}"] = params["{{RENDITA}}"]
     params["{{APP_SCAT}}"] = params["{{SUPERFICIE_TOTALE}}"]
-    params["{{APP_SRIP}}"] = params["{{SUPERFICIE_TOTALE}}"]
+    params["{{APP_SRIP}}"] = "X"
     params["{{APP_CAT}}"] = params["{{CATEGORIA}}"]
 
+    # GARAGE/BOX/CANTINA
+    params["{{GAR_FOGL}}"] = "X"
+    params["{{GAR_PART}}"] = "X"
+    params["{{GAR_SUB}}"] = "X"
+    params["{{GAR_REND}}"] = "X"
+    params["{{GAR_SCAT}}"] = "X"
+    params["{{GAR_SRIP}}"] = "X"
+    params["{{GAR_CAT}}"] = "X"
+    
+    # POSTO AUTO
+    params["{{PST_FOGL}}"] = "X"
+    params["{{PST_PART}}"] = "X"
+    params["{{PST_SUB}}"] = "X"
+    params["{{PST_REND}}"] = "X"
+    params["{{PST_SCAT}}"] = "X"
+    params["{{PST_SRIP}}"] = "X"
+    params["{{PST_CAT}}"] = "X"
+
+    # TOTALE
     params["{{TOT_SCAT}}"] = params["{{SUPERFICIE_TOTALE}}"]
-    params["{{TOT_SRIP}}"] = params["{{SUPERFICIE_TOTALE}}"]
-    params["{{TOT_CAT}}"] = params["{{CATEGORIA}}"]
+    params["{{TOT_SRIP}}"] = "X"
+    params["{{TOT_CAT}}"] = "X"
 
     for prefix in ("GAR", "PST"):
         for suffix in ("FOGL", "PART", "SUB", "REND", "SCAT", "SRIP", "CAT"):
             params[f"{{{{{prefix}_{suffix}}}}}"] = ""
 
-    params["{{CONTRATTO_DATA}}"] = str(adapter.get("contratto_data") or "")
-    params["{{DECORRENZA_DATA}}"] = str(adapter.get("decorrenza_data") or "")
-    params["{{REGISTRAZIONE_DATA}}"] = str(adapter.get("registrazione_data") or "")
-    params["{{REGISTRAZIONE_NUM}}"] = str(adapter.get("registrazione_num") or "")
-    params["{{AGENZIA_ENTRATE_SEDE}}"] = str(adapter.get("agenzia_entrate_sede") or "")
+# 3. ДАНІ КОНТРАКТУ
+    # !!! Беремо СУВОРО з адаптера (YAML) для реєстраційних даних, 
+    # щоб ігнорувати старі записи в БД, якщо в YAML пусто.
 
-    params["{{CONDUTTORE_NOME}}"] = str(adapter.get("conduttore_nome") or "")
-    params["{{CONDUTTORE_CF}}"] = str(adapter.get("conduttore_cf") or "")
-    params["{{CONDUTTORE_COMUNE}}"] = str(adapter.get("conduttore_comune") or "")
-    params["{{CONDUTTORE_VIA}}"] = str(adapter.get("conduttore_via") or "")
+    # --- БЕРЕТЬСЯ Тільки з YAML ---
+    params["{{CONTRATTO_DATA}}"] = clean_str(adapter.get("contratto_data")) or ""
+    params["{{DECORRENZA_DATA}}"] = clean_str(adapter.get("decorrenza_data")) or ""
+    params["{{REGISTRAZIONE_DATA}}"] = clean_str(adapter.get("registrazione_data")) or ""
+    params["{{REGISTRAZIONE_NUM}}"] = clean_str(adapter.get("registrazione_num")) or ""
+    params["{{AGENZIA_ENTRATE_SEDE}}"] = clean_str(adapter.get("agenzia_entrate_sede")) or ""
+    # ---------------------------------
 
-    for key in ELEMENT_KEYS:
-        v = str(elements.get(key, "") or "")
-        params[f"{{{{{key}}}}}"] = v
-        params[f"{{{{{key.upper()}}}}}"] = v
+    # 4. ДАНІ ОРЕНДАРЯ (CONDUTTORE)
+    # !!! ТУТ ЗМІНИ: Ігноруємо БД (parties.get("CONDUTTORE")), беремо тільки з YAML.
+    # Якщо в YAML пусто -> буде пуста строка -> будуть підкреслення.
+    
+    cond_nome = clean_str(adapter.get("conduttore_nome")) or ""
+    cond_cf = clean_str(adapter.get("conduttore_cf")) or ""
+    cond_comune = clean_str(adapter.get("conduttore_comune")) or ""
+    cond_via = clean_str(adapter.get("conduttore_via")) or ""
+
+    params["{{CONDUTTORE_NOME}}"] = cond_nome
+    params["{{CONDUTTORE_CF}}"] = cond_cf
+    params["{{CONDUTTORE_COMUNE}}"] = cond_comune
+    params["{{CONDUTTORE_VIA}}"] = cond_via
+
+    # ЕЛЕМЕНТИ A-D (Заповнення хрестиків)
+    for grp in ['a', 'b', 'c', 'd']:
+        for i in range(1, 15):
+            key = f"{grp}{i}"  # генерує a1, a2... d14
+            val = str(elements.get(key, "") or "")
+            # Заповнюємо різні варіанти тегів, які можуть бути у Word
+            params[f"{{{{{key.upper()}}}}}"] = val # {{{A1}}} (якщо docxtpl потребує явних дужок)
+            params[f"{{{{{key.lower()}}}}}"] = val              # {{a1}}
 
     def cnt(keys: List[str]) -> int:
         return sum(1 for k in keys if str(elements.get(k, "") or "").strip() != "")
@@ -115,10 +161,10 @@ def build_template_params(adapter, imm: Immobile, contract_ctx: Dict[str, Any]) 
         if x is None:
             return ""
         try:
-            val = float(x)
+            val_dec = float(x)
         except Exception:
             return str(x)
-        return f"{val:.{decimals}f}"
+        return f"{val_dec:.{decimals}f}"
 
     def _pct_str(p: float) -> str:
         """ Форматує відсоток як рядок з знаком +/-. """
@@ -132,6 +178,10 @@ def build_template_params(adapter, imm: Immobile, contract_ctx: Dict[str, Any]) 
     if cin:
         istat = cin.get("istat")
         params["{{CAN_ISTAT}}"] = "" if not istat else f"ISTAT (+{_fmt_num(istat, 2)}%)"
+        # Для ігнорування надбавок пізніше
+        ignore_surcharges = bool(cin.get("ignore_surcharges"))
+
+            
 
     if res:
         zona = res.get("zona")
@@ -159,15 +209,19 @@ def build_template_params(adapter, imm: Immobile, contract_ctx: Dict[str, Any]) 
 
         delta_pct = 0.0
 
-        arredato = float(cin.get("arredato"))
+        arredato = cin.get("arredato")
         if arredato:
             # Використовуємо для розрахунку число raw_canone, а не рядок
-            valore_arredato = raw_canone * arredato
+            valore_arredato = raw_canone * float(arredato)
             # Форматуємо результат розрахунку перед записом у шаблон
             params["{{CAN_ARREDATO}}"] = f"({_pct_str(arredato)})  +{_fmt_num(valore_arredato, 2)}"
             delta_pct += arredato
 
         energy = (cin.get("energy_class") or "").strip().upper()
+        # Спочатку очищаємо ВСІ теги енергії, щоб не було "сміття"
+        params["{{CAN_CLASSE_A}}"] = ""
+        params["{{CAN_CLASSE_B}}"] = ""
+        params["{{CAN_ENERGY}}"] = ""
         if energy == "A":
             valore_energy_a = raw_canone * 0.08
             params["{{CAN_CLASSE_A}}"] = f"({_pct_str(0.08)}) +{_fmt_num(valore_energy_a, 2)}"
@@ -176,18 +230,11 @@ def build_template_params(adapter, imm: Immobile, contract_ctx: Dict[str, Any]) 
             valore_energy_b = raw_canone * 0.04
             params["{{CAN_CLASSE_B}}"] = f"({_pct_str(0.04)}) +{_fmt_num(valore_energy_b, 2)}"
             delta_pct += 0.04
-        elif energy == "E":
-            valore_energy_e = raw_canone * -0.02
-            params["{{CAN_ENERGY}}"] = f"({_pct_str(-0.02)}) { _fmt_num(valore_energy_e, 2)}"
-            delta_pct += -0.02
-        elif energy == "F":
-            valore_energy_f = raw_canone * -0.04
-            params["{{CAN_ENERGY}}"] = f"({_pct_str(-0.04)}) { _fmt_num(valore_energy_f, 2)}"
-            delta_pct += -0.04
-        elif energy == "G":
-            valore_energy_g = raw_canone * -0.06
-            params["{{CAN_ENERGY}}"] = f"({_pct_str(-0.06)}) { _fmt_num(valore_energy_g, 2)}"
-            delta_pct += -0.06
+        elif energy in ("E", "F", "G"): # Об'єднуємо штрафні класи
+            pct = {"E": -0.02, "F": -0.04, "G": -0.06}[energy]
+            valore_energy = raw_canone * pct
+            params["{{CAN_ENERGY}}"] = f"({_pct_str(pct)}) {_fmt_num(valore_energy, 2)}"
+            delta_pct += pct
 
         durata = cin.get("durata_anni")
         try:
@@ -208,16 +255,24 @@ def build_template_params(adapter, imm: Immobile, contract_ctx: Dict[str, Any]) 
             params["{{CAN_DURATA}}"] = f"({_pct_str(0.07)}) +{_fmt_num(valore_durata_6, 2)}"
             delta_pct += 0.07
 
+        # 4. CONTRACT KIND (Transitorio/Studenti) - ТУТ ЛОГІКА IGNORE
         raw_kind = str(cin.get("contract_kind") or "")
         kind = raw_kind.split(".")[-1].upper()
         if kind == "TRANSITORIO":
             valore_transitorio = raw_canone * 0.15
+            # Текст в шаблон йде завжди
             params["{{CAN_TRANSITORIO}}"] = f"({_pct_str(0.15)}) +{_fmt_num(valore_transitorio, 2)}"
-            delta_pct += 0.15
+            
+            # Вплив на розрахунок діапазону тільки якщо не ігноруємо
+            if not ignore_surcharges:
+                delta_pct += 0.15
+                
         elif kind == "STUDENTI":
             valore_studenti = raw_canone * 0.20
             params["{{CAN_STUDENTI}}"] = f"({_pct_str(0.20)}) +{_fmt_num(valore_studenti, 2)}"
-            delta_pct += 0.20
+            
+            if not ignore_surcharges:
+                delta_pct += 0.20
 
         min_eur = res.get("base_min_euro_mq")
         max_eur = res.get("base_max_euro_mq")

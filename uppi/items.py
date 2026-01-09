@@ -128,6 +128,7 @@ class UppiItem(scrapy.Item):
 
     # -------------------------------------------------------------------------
     # Поля для заповнення DOCX-шаблону: Тип договору, Мебльованість, Енергоклас, Фактичний canone з договору, Тривалість договору.
+    # відсоток італійських податків (ISTAT) на поточний рік, прапорець ігнорування надбавок ignore_surcharges.
     # -------------------------------------------------------------------------
     contract_kind = scrapy.Field()
     arredato = scrapy.Field()
@@ -135,6 +136,7 @@ class UppiItem(scrapy.Item):
     canone_contrattuale_mensile = scrapy.Field()
     durata_anni = scrapy.Field()
     istat = scrapy.Field()
+    ignore_surcharges = scrapy.Field()
 
     # -------------------------------------------------------------------------
     # Поля для елементів A/B (табличні "галочки" в шаблоні)

@@ -60,6 +60,7 @@ class CanoneInput:
     contract_kind: ContractKind = ContractKind.CONCORDATO
     durata_anni: int = 3                      # для майбутніх надбавок за тривалість
     istat: Optional[float] = None            # індекс ІСТАТ для оновлення canone
+    ignore_surcharges: Optional[bool] = False    #
 
 
 @dataclass
@@ -74,18 +75,18 @@ class CanoneResult:
     tipologia: Tipologia                       # тип за площею / уніфам.
     subfascia: int                             # 1..3
 
-    base_min_euro_mq: float                    # з табл. 1
-    base_max_euro_mq: float                    # з табл. 1
+    base_min_euro_mq: float                    # з табл
+    base_max_euro_mq: float                    # з табл
     base_euro_mq: float                        # після D-елементів
-    base_euro_mq_istat: float
-    istat: float
+    base_euro_mq_istat: float                  # base_euro_mq * ISTAT якщо ISTAT == 0 або None то base_euro_mq_istat = base_euro_mq
+    istat: float                               # Коефіцієнт інфляції, задається вручну через clients.yml
 
-    canone_base_annuo: float                   # base_euro_mq * superficie
-    canone_base_mensile: float                 # / 12
+    canone_base_annuo: float                   # base_euro_mq_istat * superficie
+    canone_base_mensile: float                 # canone_base_annuo / 12
 
-    arredamento_delta_pct: float               # +15, 0, тощо
+    arredamento_delta_pct: float               # до +15%
     energy_delta_pct: float                    # +8, +4, -2*n ...
-    studenti_delta_pct: float                  # до +20
+    studenti_delta_pct: float                  # до +20%
 
     canone_finale_mq: float                    # €/mq після всіх надбавок
     canone_finale_annuo: float                 # фінальний рік

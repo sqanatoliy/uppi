@@ -95,6 +95,7 @@ class VisuraParser:
                         all_immobili.append(immobile)
 
             logger.info("[VISURA_PARSER] Готово: знайдено %d immobili у %s", len(all_immobili), pdf_path)
+            logger.info(f"All immobili information is: {all_immobili}")
             return all_immobili
         finally:
             doc.close()
@@ -214,7 +215,7 @@ class VisuraParser:
 
         return {"superficie_totale": totale, "superficie_escluse": escluse, "superficie_raw": txt}
 
-    def _parse_rendita(self, text: str) -> float | None:
+    def _parse_rendita(self, text: str) -> dict[str, str] | None:
         text = text.replace("Euro", "").strip()
 
         if not text:
