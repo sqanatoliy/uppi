@@ -18,10 +18,10 @@ class ObjectStorageConfig:
     """
     Конфіг для S3-compatible storage.
 
-    MINIO_ENDPOINT:
+    S3_ENDPOINT:
       - для локального MinIO: "localhost:9000"
       - для Cloudflare R2: "<ACCOUNT_ID>.r2.cloudflarestorage.com"
-        (без https://), а MINIO_SECURE=True
+        (без https://), а S3_SECURE=True
     """
     endpoint: str
     access_key: str
@@ -34,10 +34,10 @@ class ObjectStorageConfig:
 
 def load_storage_config() -> ObjectStorageConfig:
     return ObjectStorageConfig(
-        endpoint=config("MINIO_ENDPOINT", default="localhost:9000"),
-        access_key=config("MINIO_ACCESS_KEY", default="minioadmin"),
-        secret_key=config("MINIO_SECRET_KEY", default="minioadmin"),
-        secure=config("MINIO_SECURE", default="False").strip().lower() == "true",
+        endpoint=config("S3_ENDPOINT", default="localhost:9000"),
+        access_key=config("S3_ACCESS_KEY", default="minioadmin"),
+        secret_key=config("S3_SECRET_KEY", default="minioadmin"),
+        secure=config("S3_SECURE", default="False").strip().lower() == "true",
         visure_bucket=config("VISURE_BUCKET", default=config("MINIO_BUCKET", default="uppi-bucket")),
         attestazioni_bucket=config("ATTESTAZIONI_BUCKET", default="attestazioni"),
     )
