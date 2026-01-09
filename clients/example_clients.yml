@@ -3,98 +3,118 @@
 # LOCATORE_CF is mandatory and used both for the Sister visura query and for filling {{LOCATORE_CF}} in the template.
 # All other fields are optional; if omitted, the program will fall back to defaults or leave the corresponding field blank.
 
-- LOCATORE_CF: FZZGNN37A13G141J  # mandatory fiscal code of the landlord
-  FORCE_UPDATE_VISURA: true  # optional: force update of the Sister visura even if a cached version exists
+- LOCATORE_CF: FZZGNN73Z31G141J  # mandatory fiscal code of the landlord
+
+  # Встановивши флаг в true, програма буде ігнорувати кешовану версію візури і завантажувати нову версію з Sister
+  # Потрібно у виключних випадках, якщо візура змінилася і потрібно отримати оновлену версію або БД була пошкоджена
+  FORCE_UPDATE_VISURA: false  # optional: force update of the Sister visura even if a cached version exists
 
   # Override default search parameters (defaults: PESCARA, F, PESCARA Territorio)
+  # Параметри пошуку візури на порталі Sister, якщо потрібно перевизначити значення за замовчуванням
   COMUNE: PESCARA
   TIPO_CATASTO: F
   UFFICIO_PROVINCIALE_LABEL: PESCARA Territorio
 
-  # Landlord (locatore) address
-  LOCATORE_COMUNE_RES: Guliano Teatino
-  LOCATORE_VIA: San Cataldo
-  LOCATORE_CIVICO: 96
+  # Дані орендодавця (locatore)
+  LOCATORE_COMUNE_RES: Pescara Nord
+  LOCATORE_VIA: San Stefano
+  LOCATORE_CIVICO: 44
 
-  # Property (immobile) details
+  # Дані об'єкта (immobile)
   IMMOBILE_COMUNE: Pescara
   IMMOBILE_VIA: Socrate
-  IMMOBILE_CIVICO: 5
-
-  # Property cadastral details
+  IMMOBILE_CIVICO: 51
+  # Поверх і внутрішній номер об'єкта
   IMMOBILE_PIANO: 3
-  IMMOBILE_INTERNO: 4
+  IMMOBILE_INTERNO: 43
 
-  # Cadastral data
-  # it is necessary to specify a minimum sufficient number of parameters
-  # that will allow identifying the object among all client objects
-  FOGLIO: 28
-  NUMERO: 2713
+  # Дані кадастру для пошуку конкретного об'єкта, якщо в клієнта їх декілька. 
+  # Вибирає один з об'єктів, зазначених у візурі з вказаними параметрами.
+  FOGLIO: 
+  NUMERO: 
   SUB: 150
   RENDITA:
   SUPERFICIE_TOTALE:
   CATEGORIA:
 
   # Contract data
-  CONTRATTO_DATA: 12/09/2025
+  CONTRATTO_DATA: 
 
-  # Tenant (conduttore) details
-  CONDUTTORE_NOME: Sica Andrea
-  CONDUTTORE_CF: SCINDK73E03C632L
+  # Дані орендаря (conduttore)
+  CONDUTTORE_NOME: Toto Cutugno
+  CONDUTTORE_CF: SCIRSB03E03C532L
   CONDUTTORE_COMUNE: Pescara
-  CONDUTTORE_VIA: Dante Alighieri
-
+  CONDUTTORE_VIA: Trento
   # Registration data
   DECORRENZA_DATA: 01/10/2025
-  REGISTRAZIONE_DATA: 15/10/2025
-  REGISTRAZIONE_NUM:  AB1234567890
-  AGENZIA_ENTRATE_SEDE: PESCARA
+  REGISTRAZIONE_DATA: 
+  REGISTRAZIONE_NUM:  
+  AGENZIA_ENTRATE_SEDE: 
 
-  # Contract specifics Type of contract: CONCORDATO, TRANSITORIO, STUDENTI
-  CONTRACT_KIND: STUDENTI
+  # Тип контракту: CONCORDATO, TRANSITORIO, STUDENTI by default CONCORDATO
+  # За замовучуванням CONCORDATO, можна вказати TRANSITORIO або STUDENTI, якщо не вказати тип, то буде використано CONCORDATO
+  CONTRACT_KIND: CONCORDATO
 
-  # Furnished percentage (0.00 to 1.00) e.g., 10% = 0.10 or 6% = 0.06
+  # Відсоток за мебльованість від 0.00 до 1.00, наприклад, 15% = 0.15 або 6% = 0.06
+  # При першому заповнені буде записано в БД, потім якщо не вказати, буде використовуватись збережене значення
+  # Можна вказати тут, щоб перезаписати збережене значення
+  # можна видалили з БД вказавши мінус в лапках, наприклад: AREDATO: "-"
   ARREDATO: 0.15
 
   # Energy class: A, B, E, F, G
-  ENERGY_CLASS: E
+  # При першому заповнені буде записано в БД, потім якщо не вказати, буде використовуватись збережене значення
+  # Можна вказати тут, щоб перезаписати збережене значення
+  # можна видалили з БД вказавши мінус в лапках, наприклад: AREDATO: "-"
+  ENERGY_CLASS: F
 
   # Monthly rent  фактичний місячний canone
-  CANONE_CONTRATTUALE_MENSILE: 800.00
+  # Не зберігається в БД, потрібно вказувати кожного разу
+  CANONE_CONTRATTUALE_MENSILE: 777
 
-  # Duration in years
-  DURATA_ANNI: 5   # тривалість договору
+  # Duration in years # тривалість договору
+  # Не зберігається в БД, потрібно вказувати кожного разу за замовчуванням 3
+  DURATA_ANNI: 
 
   # ISTAT increase percentage. Required separete by . for decimals (e.g., 11.62) not by , commas
-  ISTAT: 3
+  # При першому заповнені буде записано в БД, потім якщо не вказати, буде використовуватись збережене значення
+  # Можна вказати тут, щоб перезаписати збережене значення
+  # можна видалили з БД вказавши мінус в лапках, наприклад: AREDATO: "-"
+  ISTAT: 11.62
 
-  # Elements A and B (put "X" if present, leave empty otherwise)
+  # Ignore surcharges (true/false)
+  # Не враховувати надбавки AREDATO, TRANSITORIO через флаг true/false  
+  IGNORE_SURCHARGES: false
+
+  # Elements A - D (put "X" if present, leave empty otherwise)
+  # При першому заповнені буде записано в БД, потім якщо не вказати, буде використовуватись збережене значення
+  # Можна вказати тут, щоб перезаписати збережене значення
+  # можна видалили з БД вказавши мінус в лапках, наприклад: AREDATO: "-"
   A1: X
   A2: X
   B1: X
   B2: X
   B3: X
   B4: X
-  B5: 
+  B5: X
 
   # Elements C
   C1: X
-  C2: X
-  C3: X
-  C4: 
+  C2: 
+  C3: 
+  C4: X
   C5: X
   C6: X
-  C7: 
+  C7: X
 
   # Elements D
   D1: X
-  D2: X
-  D3: 
-  D4: 
+  D2: 
+  D3: X
+  D4: X
   D5: 
   D6: 
   D7: 
-  D8: X
+  D8: 
   D9: 
   D10: 
   D11: 
